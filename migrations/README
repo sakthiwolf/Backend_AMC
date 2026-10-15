@@ -1,0 +1,3 @@
+Alembic migrations.
+Create:  alembic revision --autogenerate -m "describe change"
+Apply:   alembic upgrade head
