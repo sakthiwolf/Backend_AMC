@@ -19,7 +19,9 @@ public interface IClock
 public interface ICustomerRepository
 {
     Task<Customer?> GetByIdAsync(int id, bool includePlans, CancellationToken ct = default);
-    Task<List<Customer>> ListAsync(string? search, bool? active, CancellationToken ct = default);
+    /// <summary>Name, phone and project name match <paramref name="search"/> (case-insensitive). Ordered by name.</summary>
+    Task<(List<Customer> Items, int TotalCount)> SearchAsync(
+        string? search, bool? active, int page, int pageSize, CancellationToken ct = default);
     void Add(Customer customer);
 }
 
@@ -36,11 +38,14 @@ public interface IPlanRepository
 {
     /// <summary>Loads the plan with its customer.</summary>
     Task<Plan?> GetByIdAsync(int id, CancellationToken ct = default);
+    /// <summary>The customer's newest plan that has not been renewed (tracked), or null.</summary>
+    Task<Plan?> GetLatestOpenForCustomerAsync(int customerId, CancellationToken ct = default);
     /// <summary>Plans with customers, filtered by effective status as of <paramref name="today"/>.</summary>
     Task<List<Plan>> ListAsync(PlanFilter filter, DateOnly today, CancellationToken ct = default);
     /// <summary>
-    /// Non-renewed plans of active, non-opted-out customers whose NotificationDate has arrived,
-    /// that have not ended, and have no Sent reminder yet.
+    /// Candidate plans for today's reminder run: non-renewed plans of active, non-opted-out customers.
+    /// Yearly plans: NotificationDate has arrived, not ended, no Sent reminder yet. Monthly plans: inside
+    /// their year (the service then works out which month's reminder is open).
     /// </summary>
     Task<List<Plan>> ListPendingRemindersAsync(DateOnly today, CancellationToken ct = default);
     /// <summary>Rewrites the stored Status of non-renewed plans from the dates.</summary>

@@ -9,8 +9,10 @@ namespace AmcTracker.Application.Services;
 
 /// <summary>
 /// One pass of the daily WhatsApp reminder job (CLAUDE.md 4.5).
-/// A plan is picked up from its NotificationDate until it ends, until a reminder is Sent.
-/// That makes "retry on the next day's run" work: a Failed row is retried once per run, never in a loop.
+/// A reminder is open from its scheduled date until the date it is about (see <see cref="ReminderSchedule"/>):
+/// yearly plans once, a month before the end; monthly plans every month, 7 days before the due date.
+/// It stays open until a Sent row exists, so "retry on the next day's run" works: a Failed row is
+/// retried once per run, never in a loop.
 /// </summary>
 public class ReminderService(
     IPlanRepository plans,
@@ -33,7 +35,9 @@ public class ReminderService(
         foreach (var plan in due)
         {
             var customer = plan.Customer!;
-            var reminder = await reminders.GetAsync(plan.PlanId, plan.NotificationDate, ct);
+            // Yearly: one month before the end. Monthly: 7 days before each monthly due date.
+            if (ReminderSchedule.OpenOn(plan, today) is not { } open) { skipped++; continue; }
+            var reminder = await reminders.GetAsync(plan.PlanId, open.ScheduledDate, ct);
             if (reminder?.Status == ReminderStatus.Sent) { skipped++; continue; } // idempotency
 
             if (reminder is null)
@@ -41,7 +45,7 @@ public class ReminderService(
                 reminder = new Reminder
                 {
                     PlanId = plan.PlanId,
-                    ScheduledDate = plan.NotificationDate,
+                    ScheduledDate = open.ScheduledDate,
                     Channel = "WhatsApp",
                     Status = ReminderStatus.Pending,
                 };
@@ -54,7 +58,7 @@ public class ReminderService(
             {
                 result = await sender.SendRenewalReminderAsync(
                     new WhatsAppReminderMessage(
-                        customer.Phone, customer.CustomerName, customer.ProjectName, plan.EndDate), ct);
+                        customer.Phone, customer.CustomerName, customer.ProjectName, open.DueOn), ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

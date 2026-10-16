@@ -19,8 +19,22 @@ public record TokenResponse(
     string AccessToken, string TokenType, int ExpiresIn, string RefreshToken, UserDto User);
 
 // ---- Customers ----
-/// <summary>Body for POST and PUT /api/customers. IsActive is honoured on PUT only.</summary>
-public record CustomerRequest(
+/// <summary>The customer fields a client may send (shared by create and update).</summary>
+public interface ICustomerFields
+{
+    string? CustomerName { get; }
+    string? Phone { get; }
+    string? Location { get; }
+    DateOnly? InstallationDate { get; }
+    string? ProjectName { get; }
+    decimal? ProjectValue { get; }
+    bool? WhatsAppOptOut { get; }
+    /// <summary>"AMC" (yearly) or "Monthly". Omitted means AMC on create and "unchanged" on update.</summary>
+    PlanType? PlanType { get; }
+}
+
+/// <summary>Body for POST /api/customers.</summary>
+public record CreateCustomerRequest(
     string? CustomerName,
     string? Phone,
     string? Location,
@@ -28,7 +42,21 @@ public record CustomerRequest(
     string? ProjectName,
     decimal? ProjectValue,
     bool? WhatsAppOptOut,
-    bool? IsActive);
+    PlanType? PlanType = null) : ICustomerFields;
+
+/// <summary>Body for PUT /api/customers/{id}. Same fields as create; IsActive is changed only by DELETE.</summary>
+public record UpdateCustomerRequest(
+    string? CustomerName,
+    string? Phone,
+    string? Location,
+    DateOnly? InstallationDate,
+    string? ProjectName,
+    decimal? ProjectValue,
+    bool? WhatsAppOptOut,
+    PlanType? PlanType = null) : ICustomerFields;
+
+/// <summary>One page of a list: { items, page, pageSize, totalCount }.</summary>
+public record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalCount);
 
 public record CustomerDto(
     int CustomerId,
@@ -42,10 +70,7 @@ public record CustomerDto(
     bool IsActive,
     DateTime CreatedAt,
     DateTime? UpdatedAt,
-    /// <summary>Status of the customer's latest plan; null when they have none.</summary>
-    PlanStatus? PlanStatus);
-
-public record CustomerDetailDto(CustomerDto Customer, IReadOnlyList<PlanDto> Plans);
+    PlanType PlanType);
 
 // ---- Plans ----
 public record CreatePlanRequest(PlanType? PlanType, decimal? Amount, DateOnly? StartDate);

@@ -11,6 +11,18 @@ public static class ApiErrors
 {
     public static object Body(string code, string message) => new { error = new { code, message } };
 
+    /// <summary>422 body: { error: { code, message, details: [{ field, message, code }] } }.</summary>
+    public static object Body(string code, string message, IReadOnlyList<FieldError> details) =>
+        new
+        {
+            error = new
+            {
+                code,
+                message,
+                details = details.Select(d => new { field = d.Field, message = d.Message, code = d.Code }),
+            },
+        };
+
     public static Task Write(HttpContext ctx, int status, string code, string message)
     {
         ctx.Response.StatusCode = status;
@@ -46,6 +58,12 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
         {
             case AppException app:
                 if (app.StatusCode == 401) ctx.Response.Headers.WWWAuthenticate = "Bearer";
+                if (app.Details is { } details)
+                {
+                    ctx.Response.StatusCode = app.StatusCode;
+                    await ctx.Response.WriteAsJsonAsync(ApiErrors.Body(app.Code, app.Message, details), ct);
+                    return true;
+                }
                 await Send(ctx, app.StatusCode, app.Code, app.Message, ct);
                 return true;
             case ValidationException v:

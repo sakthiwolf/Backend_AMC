@@ -23,7 +23,10 @@ public class AuthService(
     private readonly AuthOptions _opt = options.Value;
 
     // Verified against when the username is unknown, so timing does not reveal which usernames exist.
-    private readonly string _dummyHash = hasher.Hash("not-a-real-password");
+    // Hashing is deliberately slow, so it is done once for the whole process, and only when needed.
+    // (It used to run in this constructor, which made every login and refresh pay for an extra hash.)
+    private static string? s_dummyHash;
+    private string DummyHash => s_dummyHash ??= hasher.Hash("not-a-real-password");
 
     private static AppException InvalidCredentials() =>
         new(401, "invalid_credentials", "Wrong username or password.");
@@ -36,7 +39,7 @@ public class AuthService(
 
         if (user is null || !user.IsActive)
         {
-            hasher.Verify(_dummyHash, req.Password!);
+            hasher.Verify(DummyHash, req.Password!);
             throw InvalidCredentials();
         }
 

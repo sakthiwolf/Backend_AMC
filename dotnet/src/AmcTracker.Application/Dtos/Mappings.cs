@@ -10,14 +10,11 @@ public static class Mappings
         p.PlanType, p.Amount, p.StartDate, p.EndDate, p.NotificationDate,
         p.EffectiveStatus(today), p.PreviousPlanId, p.CreatedAt);
 
-    public static CustomerDto ToDto(this Customer c, DateOnly today)
-    {
-        var latest = c.Plans.OrderByDescending(p => p.StartDate).ThenByDescending(p => p.PlanId).FirstOrDefault();
-        return new CustomerDto(
-            c.CustomerId, c.CustomerName, c.Phone, c.Location, c.InstallationDate,
-            c.ProjectName, c.ProjectValue, c.WhatsAppOptOut, c.IsActive, c.CreatedAt, c.UpdatedAt,
-            latest?.EffectiveStatus(today));
-    }
+    public static CustomerDto ToDto(this Customer c) => new(
+        c.CustomerId, c.CustomerName, c.Phone, c.Location, c.InstallationDate,
+        // "+ 0.00m" keeps two decimals in the JSON (12345.60, not 12345.6).
+        c.ProjectName, c.ProjectValue is { } v ? decimal.Round(v, 2) + 0.00m : null,
+        c.WhatsAppOptOut, c.IsActive, c.CreatedAt, c.UpdatedAt, c.PlanType);
 
     public static ReminderDto ToDto(this Reminder r) => new(
         r.ReminderId, r.PlanId, r.ScheduledDate, r.SentAt, r.Channel, r.Status, r.ErrorMessage);

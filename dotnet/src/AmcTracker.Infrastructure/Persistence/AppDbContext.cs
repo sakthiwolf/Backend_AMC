@@ -81,8 +81,26 @@ internal class CustomerConfiguration : IEntityTypeConfiguration<Customer>
         e.Property(x => x.ProjectName).HasMaxLength(150);
         e.Property(x => x.ProjectValue).HasColumnType("decimal(12,2)");
         e.Property(x => x.WhatsAppOptOut).HasDefaultValue(false);
+        e.Property(x => x.PlanType).HasConversion<string>().HasMaxLength(10).IsRequired()
+            .HasDefaultValue(PlanType.AMC).ValueGeneratedNever();
         e.Property(x => x.IsActive).HasDefaultValue(true).ValueGeneratedNever();
         e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+
+        // Search and list by name, look up by phone, filter by active.
+        e.HasIndex(x => x.CustomerName).HasDatabaseName("IX_Customers_CustomerName");
+        e.HasIndex(x => x.Phone).HasDatabaseName("IX_Customers_Phone");
+        e.HasIndex(x => x.IsActive).HasDatabaseName("IX_Customers_IsActive");
+
+        e.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_Customers_PlanType", "[PlanType] IN ('AMC', 'Monthly')");
+            t.HasCheckConstraint("CK_Customers_ProjectValue_NonNegative",
+                "[ProjectValue] IS NULL OR [ProjectValue] >= 0");
+            // E.164: "+", a non-zero first digit, 8 to 15 digits in all, digits only.
+            t.HasCheckConstraint("CK_Customers_Phone_E164",
+                "LEFT([Phone], 1) = '+' AND LEN([Phone]) BETWEEN 9 AND 16 " +
+                "AND SUBSTRING([Phone], 2, 1) <> '0' AND SUBSTRING([Phone], 2, 20) NOT LIKE '%[^0-9]%'");
+        });
     }
 }
 

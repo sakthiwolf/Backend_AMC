@@ -10,7 +10,7 @@ public static class DependencyInjection
     {
         services.AddValidatorsFromAssemblyContaining<AuthService>();
         services.AddScoped<AuthService>();
-        services.AddScoped<CustomerService>();
+        services.AddScoped<ICustomerService, CustomerService>();
         services.AddScoped<PlanService>();
         services.AddScoped<ReminderService>();
         services.AddScoped<DashboardService>();

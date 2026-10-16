@@ -1,3 +1,5 @@
+using AmcTracker.Domain.Enums;
+
 namespace AmcTracker.Domain.Entities;
 
 public class Customer
@@ -11,6 +13,8 @@ public class Customer
     public DateOnly InstallationDate { get; set; }
     public string? ProjectName { get; set; }
     public decimal? ProjectValue { get; set; }
+    /// <summary>Yearly (AMC) or Monthly. Decides when WhatsApp reminders go out (see ReminderSchedule).</summary>
+    public PlanType PlanType { get; set; } = PlanType.AMC;
     public bool WhatsAppOptOut { get; set; }
     /// <summary>Soft delete only: false means deleted.</summary>
     public bool IsActive { get; set; } = true;
