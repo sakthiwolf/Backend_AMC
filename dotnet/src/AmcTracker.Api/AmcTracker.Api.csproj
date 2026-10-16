@@ -14,12 +14,23 @@
     </PackageReference>
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.3.0" />
+    <!-- Pulled in by Microsoft.Data.SqlClient for Azure AD broker sign-in only.
+         SQL login (User Id/Password) and Windows auth do not use it; its
+         native library is about 38 MB. -->
+    <PackageReference Include="Microsoft.Identity.Client.NativeInterop" Version="0.20.6" ExcludeAssets="runtime;native" />
   </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Keep publish output small: English resources only, no debug symbols. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
 </Project>
