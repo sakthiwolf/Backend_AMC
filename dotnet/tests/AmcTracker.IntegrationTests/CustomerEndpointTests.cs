@@ -104,7 +104,7 @@ public class CustomerEndpointTests : IAsyncLifetime
         Assert.Equal(["Asha Traders"], Names(await Page(c, "?search=cctv")));
         Assert.Equal(["Mohan"], Names(await Page(c, "?search=4155550")));
         Assert.Equal(["Asha Traders"], Names(await Page(c, "?search=%2B91%209876%20543210"))); // "+91 9876 543210"
-        Assert.Equal(["Asha Traders", "Mohan", "Zed Stores"], Names(await Page(c)));
+        Assert.Equal(["Mohan", "Zed Stores", "Asha Traders"], Names(await Page(c))); // newest first
         Assert.Empty(Names(await Page(c, "?search=nothing-like-this")));
     }
 
@@ -162,12 +162,12 @@ public class CustomerEndpointTests : IAsyncLifetime
         for (var i = 1; i <= 5; i++) await Create(c, Body($"Customer {i:00}", $"+9190000000{i:00}"));
 
         var first = await Page(c, "?pageSize=2&page=1");
-        Assert.Equal(["Customer 01", "Customer 02"], Names(first));
+        Assert.Equal(["Customer 05", "Customer 04"], Names(first)); // newest first
         Assert.Equal(5, first.GetProperty("totalCount").GetInt32());
         Assert.Equal(1, first.GetProperty("page").GetInt32());
         Assert.Equal(2, first.GetProperty("pageSize").GetInt32());
 
-        Assert.Equal(["Customer 05"], Names(await Page(c, "?pageSize=2&page=3")));
+        Assert.Equal(["Customer 01"], Names(await Page(c, "?pageSize=2&page=3")));
         Assert.Empty(Names(await Page(c, "?pageSize=2&page=9")));
 
         Assert.Equal(20, (await Page(c)).GetProperty("pageSize").GetInt32());

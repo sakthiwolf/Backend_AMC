@@ -206,4 +206,37 @@ public class CustomerServiceTests
 
         _plans.Received(1).Add(Arg.Is<Plan>(p => p.PlanType == PlanType.Monthly));
     }
+
+    [Fact]
+    public async Task Create_calculates_the_end_date_and_next_reminder_date()
+    {
+        // The clock says 16 Oct 2026.
+        var yearly = await _service.CreateAsync(new CreateCustomerRequest(
+            "Asha", "+919876543210", null, new DateOnly(2026, 10, 12), null, null, null, PlanType.AMC));
+        Assert.Equal(new DateOnly(2027, 10, 12), yearly.PlanEndDate);
+        Assert.Equal(new DateOnly(2027, 9, 12), yearly.ReminderDate); // 1 month before the end
+
+        var monthly = await _service.CreateAsync(new CreateCustomerRequest(
+            "Mohan", "+919876543211", null, new DateOnly(2026, 10, 12), null, null, null, PlanType.Monthly));
+        Assert.Equal(new DateOnly(2027, 10, 12), monthly.PlanEndDate);
+        Assert.Equal(new DateOnly(2026, 11, 5), monthly.ReminderDate); // 7 days before 12 Nov
+    }
+
+    [Fact]
+    public async Task Changing_the_installation_date_moves_the_plan_and_the_dates()
+    {
+        var row = Row();
+        var plan = Plan.Create(7, PlanType.AMC, 0m, new DateOnly(2026, 1, 1), new DateOnly(2026, 10, 16));
+        _repo.GetByIdAsync(7, false, Arg.Any<CancellationToken>()).Returns(row);
+        _plans.GetLatestOpenForCustomerAsync(7, Arg.Any<CancellationToken>()).Returns(plan);
+
+        var dto = await _service.UpdateAsync(7, new UpdateCustomerRequest(
+            "Asha", "+919876543210", null, new DateOnly(2026, 10, 12), null, null, null));
+
+        Assert.Equal(new DateOnly(2026, 10, 12), plan.StartDate);
+        Assert.Equal(new DateOnly(2027, 10, 12), plan.EndDate);
+        Assert.Equal(new DateOnly(2027, 9, 12), plan.NotificationDate);
+        Assert.Equal(new DateOnly(2027, 10, 12), dto.PlanEndDate);
+        Assert.Equal(new DateOnly(2027, 9, 12), dto.ReminderDate);
+    }
 }

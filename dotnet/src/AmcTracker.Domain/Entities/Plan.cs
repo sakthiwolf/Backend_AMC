@@ -48,6 +48,15 @@ public class Plan
         };
     }
 
+    /// <summary>Moves a plan to a new start date and recalculates its end and notification dates.</summary>
+    public void Reschedule(DateOnly startDate, DateOnly today)
+    {
+        StartDate = startDate;
+        EndDate = PlanDateCalculator.EndDate(startDate);
+        NotificationDate = PlanDateCalculator.NotificationDate(startDate);
+        if (!IsRenewed) Status = PlanStatusCalculator.Resolve(today, NotificationDate, EndDate, isRenewed: false);
+    }
+
     public PlanStatus EffectiveStatus(DateOnly today) =>
         PlanStatusCalculator.Resolve(today, NotificationDate, EndDate, IsRenewed);
 

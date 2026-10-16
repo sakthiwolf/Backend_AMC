@@ -56,6 +56,9 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
+                    b.Property<DateOnly?>("PlanEndDate")
+                        .HasColumnType("date");
+
                     b.Property<string>("PlanType")
                         .IsRequired()
                         .HasMaxLength(10)
@@ -69,6 +72,9 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                     b.Property<decimal?>("ProjectValue")
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(12,2)");
+
+                    b.Property<DateOnly?>("ReminderDate")
+                        .HasColumnType("date");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");

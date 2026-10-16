@@ -90,4 +90,24 @@ public class ReminderScheduleTests
         Assert.Null(ReminderSchedule.OpenOn(plan, new DateOnly(2026, 10, 12)));
         Assert.Null(ReminderSchedule.OpenOn(plan, new DateOnly(2027, 10, 13)));
     }
+
+    [Fact]
+    public void NextScheduled_yearly_is_the_single_reminder_until_it_has_passed()
+    {
+        var plan = PlanOf(PlanType.AMC, new DateOnly(2026, 10, 12));
+        Assert.Equal(new DateOnly(2027, 9, 12), ReminderSchedule.NextScheduled(plan, new DateOnly(2026, 10, 16)));
+        Assert.Equal(new DateOnly(2027, 9, 12), ReminderSchedule.NextScheduled(plan, new DateOnly(2027, 9, 12))); // today counts
+        Assert.Null(ReminderSchedule.NextScheduled(plan, new DateOnly(2027, 9, 13)));
+    }
+
+    [Fact]
+    public void NextScheduled_monthly_is_the_next_of_the_twelve_and_rolls_forward()
+    {
+        var plan = PlanOf(PlanType.Monthly, new DateOnly(2026, 10, 12));
+        Assert.Equal(new DateOnly(2026, 11, 5), ReminderSchedule.NextScheduled(plan, new DateOnly(2026, 10, 16)));
+        Assert.Equal(new DateOnly(2026, 11, 5), ReminderSchedule.NextScheduled(plan, new DateOnly(2026, 11, 5)));
+        Assert.Equal(new DateOnly(2026, 12, 5), ReminderSchedule.NextScheduled(plan, new DateOnly(2026, 11, 6)));
+        Assert.Equal(new DateOnly(2027, 10, 5), ReminderSchedule.NextScheduled(plan, new DateOnly(2027, 9, 6)));
+        Assert.Null(ReminderSchedule.NextScheduled(plan, new DateOnly(2027, 10, 6)));
+    }
 }

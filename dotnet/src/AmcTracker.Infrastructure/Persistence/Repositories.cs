@@ -31,7 +31,8 @@ internal class CustomerRepository(AppDbContext db) : ICustomerRepository
                 || (c.ProjectName != null && c.ProjectName.ToLower().Contains(s)));
         }
         var total = await q.CountAsync(ct);
-        var items = await q.OrderBy(c => c.CustomerName).ThenBy(c => c.CustomerId)
+        // Newest first, so a customer who was just added is at the top of page 1.
+        var items = await q.OrderByDescending(c => c.CreatedAt).ThenByDescending(c => c.CustomerId)
             .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
         return (items, total);
     }
@@ -103,6 +104,25 @@ internal class PlanRepository(AppDbContext db) : IPlanRepository
                     || (p.PlanType == PlanType.Monthly && p.StartDate <= today && today <= p.EndDate)))
             .OrderBy(p => p.NotificationDate).ThenBy(p => p.PlanId)
             .ToListAsync(ct);
+
+    public async Task SyncCustomerDatesAsync(DateOnly today, CancellationToken ct = default)
+    {
+        // One open plan per customer is the norm; take the newest if there are several.
+        var plans = await db.Plans.Include(p => p.Customer)
+            .Where(p => p.Status != PlanStatus.Renewed && p.Customer!.IsActive).ToListAsync(ct);
+        foreach (var group in plans.GroupBy(p => p.CustomerId))
+        {
+            var plan = group.OrderByDescending(p => p.StartDate).ThenByDescending(p => p.PlanId).First();
+            var c = plan.Customer!;
+            var reminder = ReminderSchedule.NextScheduled(plan, today);
+            if (c.PlanEndDate != plan.EndDate || c.ReminderDate != reminder)
+            {
+                c.PlanEndDate = plan.EndDate;
+                c.ReminderDate = reminder;
+            }
+        }
+        await db.SaveChangesAsync(ct);
+    }
 
     public async Task SyncStatusesAsync(DateOnly today, CancellationToken ct = default)
     {

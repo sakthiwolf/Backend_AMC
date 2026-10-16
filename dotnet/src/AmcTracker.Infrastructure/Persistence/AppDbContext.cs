@@ -83,6 +83,8 @@ internal class CustomerConfiguration : IEntityTypeConfiguration<Customer>
         e.Property(x => x.WhatsAppOptOut).HasDefaultValue(false);
         e.Property(x => x.PlanType).HasConversion<string>().HasMaxLength(10).IsRequired()
             .HasDefaultValue(PlanType.AMC).ValueGeneratedNever();
+        e.Property(x => x.PlanEndDate).HasColumnType("date");
+        e.Property(x => x.ReminderDate).HasColumnType("date");
         e.Property(x => x.IsActive).HasDefaultValue(true).ValueGeneratedNever();
         e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 

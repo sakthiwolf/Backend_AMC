@@ -70,7 +70,11 @@ public record CustomerDto(
     bool IsActive,
     DateTime CreatedAt,
     DateTime? UpdatedAt,
-    PlanType PlanType);
+    PlanType PlanType,
+    /// <summary>Calculated: when the plan ends.</summary>
+    DateOnly? PlanEndDate,
+    /// <summary>Calculated: the next WhatsApp reminder date.</summary>
+    DateOnly? ReminderDate);
 
 // ---- Plans ----
 public record CreatePlanRequest(PlanType? PlanType, decimal? Amount, DateOnly? StartDate);

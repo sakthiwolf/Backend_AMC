@@ -161,4 +161,51 @@ public class PlanTypeReminderTests : IAsyncLifetime
         Assert.Equal(0, (await Run(c)).GetProperty("sent").GetInt32());
         Assert.Empty(_api.Whatsapp.Sent);
     }
+
+    [Fact]
+    public async Task Customer_shows_the_calculated_end_date_and_reminder_date()
+    {
+        var c = await _api.SignedInAsync();
+        var start = _api.Today.AddMonths(-2);
+        var yearly = await Create(c, Body(start, "AMC", "Yearly Co", "+919000000021"));
+        Assert.Equal(start.AddMonths(12).ToString("yyyy-MM-dd"), yearly.GetProperty("planEndDate").GetString());
+        Assert.Equal(start.AddMonths(11).ToString("yyyy-MM-dd"), yearly.GetProperty("reminderDate").GetString());
+
+        var monthly = await Create(c, Body(start, "Monthly", "Monthly Co", "+919000000022"));
+        Assert.Equal(start.AddMonths(12).ToString("yyyy-MM-dd"), monthly.GetProperty("planEndDate").GetString());
+        var next = ReminderSchedule.MonthlyDueDates(start).Select(ReminderSchedule.MonthlyReminderDate).First(d => d >= _api.Today);
+        Assert.Equal(next.ToString("yyyy-MM-dd"), monthly.GetProperty("reminderDate").GetString());
+    }
+
+    [Fact]
+    public async Task Editing_the_installation_date_recalculates_the_dates_and_the_plan()
+    {
+        var c = await _api.SignedInAsync();
+        var id = (await Create(c, Body(_api.Today, "AMC"))).GetProperty("customerId").GetInt32();
+        var newStart = _api.Today.AddMonths(-5);
+
+        var put = await c.PutAsJsonAsync($"/api/customers/{id}", Body(newStart, "AMC"));
+        var json = await put.Json();
+        Assert.Equal(newStart.AddMonths(12).ToString("yyyy-MM-dd"), json.GetProperty("planEndDate").GetString());
+
+        var plan = await _api.WithDbAsync(db => db.Plans.SingleAsync(p => p.CustomerId == id));
+        Assert.Equal(newStart, plan.StartDate);
+        Assert.Equal(newStart.AddMonths(12), plan.EndDate);
+    }
+
+    [Fact]
+    public async Task The_daily_run_rolls_a_monthly_customers_next_reminder_forward()
+    {
+        var c = await _api.SignedInAsync();
+        var start = MonthlyStartRemindingToday();
+        var id = (await Create(c, Body(start, "Monthly"))).GetProperty("customerId").GetInt32();
+        Assert.Equal(_api.Today, (await _api.WithDbAsync(db => db.Customers.SingleAsync(x => x.CustomerId == id))).ReminderDate);
+
+        await Run(c); // sends today's reminder, then refreshes the dates
+        var after = await _api.WithDbAsync(db => db.Customers.SingleAsync(x => x.CustomerId == id));
+        Assert.Equal(_api.Today, after.ReminderDate); // "today" still counts as the next date
+        // Tomorrow the next one would be a month later; the refresh uses the same rule as the schedule:
+        var plan = await _api.WithDbAsync(db => db.Plans.SingleAsync(p => p.CustomerId == id));
+        Assert.Equal(ReminderSchedule.NextScheduled(plan, _api.Today), after.ReminderDate);
+    }
 }

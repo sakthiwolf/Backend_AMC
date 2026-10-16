@@ -28,6 +28,7 @@ public class ReminderService(
     {
         var today = clock.Today;
         await plans.SyncStatusesAsync(today, ct);
+        await plans.SyncCustomerDatesAsync(today, ct); // rolls the monthly "next reminder" forward
 
         var due = await plans.ListPendingRemindersAsync(today, ct);
         int sent = 0, failed = 0, skipped = 0;

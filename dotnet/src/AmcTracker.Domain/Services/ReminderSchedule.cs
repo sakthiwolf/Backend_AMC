@@ -30,6 +30,22 @@ public static class ReminderSchedule
     public static DateOnly MonthlyReminderDate(DateOnly dueDate) => dueDate.AddDays(-MonthlyLeadDays);
 
     /// <summary>
+    /// The next reminder date from <paramref name="today"/> on (today counts), or null when none is left.
+    /// Yearly: the single reminder a month before the end. Monthly: the next of the twelve monthly ones.
+    /// </summary>
+    public static DateOnly? NextScheduled(Plan plan, DateOnly today)
+    {
+        if (plan.PlanType == PlanType.AMC)
+            return plan.NotificationDate >= today ? plan.NotificationDate : null;
+        foreach (var due in MonthlyDueDates(plan.StartDate))
+        {
+            var scheduled = MonthlyReminderDate(due);
+            if (scheduled >= today) return scheduled;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// The reminder that is open on <paramref name="today"/>, or null. A reminder stays open from its
     /// scheduled date until the date it is about, so a failed send is retried on later runs.
     /// </summary>

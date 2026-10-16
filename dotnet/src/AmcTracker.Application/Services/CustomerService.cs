@@ -57,7 +57,14 @@ public class CustomerService(
         // Switching Monthly <-> Yearly changes the plan the reminders run on.
         var plan = await plans.GetLatestOpenForCustomerAsync(c.CustomerId, ct);
         if (plan is null) AddPlan(c); // customers created before plans existed
-        else if (plan.PlanType != c.PlanType) plan.PlanType = c.PlanType;
+        else
+        {
+            if (plan.PlanType != c.PlanType) plan.PlanType = c.PlanType;
+            // The first plan follows the installation date; renewals keep their own start.
+            if (plan.PreviousPlanId is null && plan.StartDate != c.InstallationDate)
+                plan.Reschedule(c.InstallationDate, clock.Today);
+            SetDates(c, plan);
+        }
 
         await uow.SaveChangesAsync(ct);
         return c.ToDto();
@@ -74,6 +81,14 @@ public class CustomerService(
         plan.CreatedAt = clock.UtcNow;
         plan.Customer = c;
         plans.Add(plan);
+        SetDates(c, plan);
+    }
+
+    /// <summary>The end date and next reminder date shown on the customer, calculated from the plan.</summary>
+    private void SetDates(Customer c, Plan plan)
+    {
+        c.PlanEndDate = plan.EndDate;
+        c.ReminderDate = ReminderSchedule.NextScheduled(plan, clock.Today);
     }
 
     /// <summary>Soft delete: sets IsActive = false. Rows with plans or reminders are never removed.</summary>

@@ -19,7 +19,7 @@ public interface IClock
 public interface ICustomerRepository
 {
     Task<Customer?> GetByIdAsync(int id, bool includePlans, CancellationToken ct = default);
-    /// <summary>Name, phone and project name match <paramref name="search"/> (case-insensitive). Ordered by name.</summary>
+    /// <summary>Name, phone and project name match <paramref name="search"/> (case-insensitive). Newest first.</summary>
     Task<(List<Customer> Items, int TotalCount)> SearchAsync(
         string? search, bool? active, int page, int pageSize, CancellationToken ct = default);
     void Add(Customer customer);
@@ -48,6 +48,8 @@ public interface IPlanRepository
     /// their year (the service then works out which month's reminder is open).
     /// </summary>
     Task<List<Plan>> ListPendingRemindersAsync(DateOnly today, CancellationToken ct = default);
+    /// <summary>Refreshes each customer's PlanEndDate and ReminderDate from their newest open plan.</summary>
+    Task SyncCustomerDatesAsync(DateOnly today, CancellationToken ct = default);
     /// <summary>Rewrites the stored Status of non-renewed plans from the dates.</summary>
     Task SyncStatusesAsync(DateOnly today, CancellationToken ct = default);
     void Add(Plan plan);
