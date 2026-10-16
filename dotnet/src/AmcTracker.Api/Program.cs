@@ -87,6 +87,15 @@ builder.Services.AddCors(o => o.AddPolicy("DevWeb", p => p
         && (u.Host == "localhost" || u.Host == "127.0.0.1"))
     .AllowAnyHeader().AllowAnyMethod()));
 
+// Production: browser origins listed in Cors:AllowedOrigins (e.g. a Flutter web build). The Android app is
+// not a browser and does not send CORS preflights, so an empty list simply means "no browser origins".
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+builder.Services.AddCors(o => o.AddPolicy("Configured", p =>
+{
+    if (corsOrigins.Length > 0)
+        p.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod();
+}));
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(o =>
 {
@@ -132,11 +141,12 @@ app.UseStatusCodePages(ctx =>
     return ApiErrors.Write(ctx.HttpContext, status, code, message);
 });
 
-if (app.Environment.IsDevelopment()) app.UseCors("DevWeb");
+app.UseCors(app.Environment.IsDevelopment() ? "DevWeb" : "Configured");
 if (app.Configuration.GetValue<bool>("Swagger:Enabled"))
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    // Relative URL so it also works when the app sits in an IIS virtual directory.
+    app.UseSwaggerUI(o => o.SwaggerEndpoint("v1/swagger.json", "AMC Tracker API v1"));
 }
 
 if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
@@ -144,6 +154,8 @@ if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
     using var scope = app.Services.CreateScope();
     await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
 }
+
+await SeedUser.RunAsync(app);
 
 app.UseAuthentication();
 app.UseAuthorization();
