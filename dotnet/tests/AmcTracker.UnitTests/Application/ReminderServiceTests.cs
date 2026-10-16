@@ -137,4 +137,67 @@ public class ReminderServiceTests
 
         Assert.Equal((2, 1, 1), (result.Processed, result.Sent, result.Failed));
     }
+
+    // ---- Monthly plans: a reminder 7 days before each monthly due date ----
+
+    private static Plan MonthlyPlan(DateOnly start, int id = 1) => new()
+    {
+        PlanId = id, CustomerId = 10, PlanType = PlanType.Monthly,
+        StartDate = start, EndDate = start.AddMonths(12), NotificationDate = start.AddMonths(11),
+        Customer = new Customer { CustomerId = 10, CustomerName = "Asha", Phone = "+919876543210", ProjectName = "CCTV" },
+    };
+
+    [Fact]
+    public async Task Monthly_plan_gets_a_reminder_seven_days_before_the_monthly_due_date()
+    {
+        // Due dates are the 19th of each month; Today is 12 Sep 2027, so 19 Sep is due and 12 Sep is the reminder day.
+        var plan = MonthlyPlan(new DateOnly(2026, 10, 19));
+        _plans.ListPendingRemindersAsync(Today, Arg.Any<CancellationToken>()).Returns([plan]);
+        _reminders.GetAsync(1, Today, Arg.Any<CancellationToken>()).Returns((Reminder?)null);
+        _sender.SendRenewalReminderAsync(Arg.Any<WhatsAppReminderMessage>(), Arg.Any<CancellationToken>())
+            .Returns(new WhatsAppSendResult(true));
+        Reminder? added = null;
+        _reminders.When(r => r.Add(Arg.Any<Reminder>())).Do(c => added = c.Arg<Reminder>());
+
+        var result = await _service.RunDailyAsync();
+
+        Assert.Equal(1, result.Sent);
+        Assert.Equal(Today, added!.ScheduledDate);
+        await _sender.Received(1).SendRenewalReminderAsync(
+            Arg.Is<WhatsAppReminderMessage>(m => m.EndDate == new DateOnly(2027, 9, 19)), // the monthly due date
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Monthly_plan_is_skipped_on_days_with_no_open_reminder()
+    {
+        // Due on the 25th: the reminder day is the 18th, so the 12th is quiet.
+        _plans.ListPendingRemindersAsync(Today, Arg.Any<CancellationToken>())
+            .Returns([MonthlyPlan(new DateOnly(2026, 10, 25))]);
+
+        var result = await _service.RunDailyAsync();
+
+        Assert.Equal((1, 0, 0, 1), (result.Processed, result.Sent, result.Failed, result.Skipped));
+        await _sender.DidNotReceiveWithAnyArgs().SendRenewalReminderAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task Monthly_reminder_for_this_month_is_sent_once_even_if_an_older_month_was_sent()
+    {
+        var plan = MonthlyPlan(new DateOnly(2026, 10, 19));
+        _plans.ListPendingRemindersAsync(Today, Arg.Any<CancellationToken>()).Returns([plan]);
+        // Last month's row exists and is Sent; this month's does not exist yet.
+        _reminders.GetAsync(1, Today, Arg.Any<CancellationToken>()).Returns((Reminder?)null);
+        _sender.SendRenewalReminderAsync(Arg.Any<WhatsAppReminderMessage>(), Arg.Any<CancellationToken>())
+            .Returns(new WhatsAppSendResult(true));
+
+        var first = await _service.RunDailyAsync();
+        Assert.Equal(1, first.Sent);
+
+        // Second run the same day: this month's reminder is now Sent, so nothing goes out again.
+        _reminders.GetAsync(1, Today, Arg.Any<CancellationToken>())
+            .Returns(new Reminder { PlanId = 1, ScheduledDate = Today, Status = ReminderStatus.Sent });
+        var second = await _service.RunDailyAsync();
+        Assert.Equal((0, 1), (second.Sent, second.Skipped));
+    }
 }

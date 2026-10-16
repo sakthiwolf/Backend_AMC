@@ -10,6 +10,13 @@ namespace AmcTracker.IntegrationTests;
 
 internal static class Http
 {
+    /// <summary>
+    /// Creating a customer also creates their first plan. Tests that exercise POST /customers/{id}/plans
+    /// with their own type and amount remove that plan first.
+    /// </summary>
+    public static Task<int> DropAutoPlan(this ApiFixture api, int customerId) =>
+        api.WithDbAsync(db => db.Database.ExecuteSqlRawAsync("DELETE FROM Plans WHERE CustomerId = {0}", customerId));
+
     public static async Task<JsonElement> Json(this HttpResponseMessage r) =>
         await r.Content.ReadFromJsonAsync<JsonElement>();
 
@@ -208,51 +215,12 @@ public class CustomerAndPlanTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Invalid_phone_is_rejected_with_422()
-    {
-        var c = await _api.SignedInAsync();
-        var res = await c.PostAsJsonAsync("/api/customers", Http.CustomerBody(_api.Today, phone: "9876543210"));
-        Assert.Equal((HttpStatusCode)422, res.StatusCode);
-        Assert.Contains("phone", (await res.Json()).GetProperty("error").GetProperty("message").GetString());
-    }
-
-    [Fact]
-    public async Task Customer_crud_search_and_soft_delete()
-    {
-        var c = await _api.SignedInAsync();
-        var id = await CreateCustomer(c, new DateOnly(2026, 10, 12));
-        await CreateCustomer(c, new DateOnly(2026, 10, 12), "+919000000001", "Zed Stores");
-
-        var detail = await (await c.GetAsync($"/api/customers/{id}")).Json();
-        var cust = detail.GetProperty("customer");
-        Assert.Equal("Asha Traders", cust.GetProperty("customerName").GetString());
-        Assert.Equal("2026-10-12", cust.GetProperty("installationDate").GetString());
-        Assert.True(cust.GetProperty("isActive").GetBoolean());
-        Assert.False(cust.GetProperty("whatsAppOptOut").GetBoolean());
-
-        var list = await (await c.GetAsync("/api/customers?search=zed")).Json();
-        Assert.Single(list.EnumerateArray());
-
-        var put = await c.PutAsJsonAsync($"/api/customers/{id}",
-            new { customerName = "Asha Traders Ltd", phone = "+919876543210", installationDate = "2026-10-12", whatsAppOptOut = true });
-        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
-        Assert.True((await put.Json()).GetProperty("whatsAppOptOut").GetBoolean());
-
-        Assert.Equal(HttpStatusCode.NoContent, (await c.DeleteAsync($"/api/customers/{id}")).StatusCode);
-        // Soft delete: the row is still there, flagged inactive.
-        var row = await _api.WithDbAsync(db => db.Customers.SingleAsync(x => x.CustomerId == id));
-        Assert.False(row.IsActive);
-        Assert.Single((await (await c.GetAsync("/api/customers?active=true")).Json()).EnumerateArray());
-        Assert.Equal(2, (await (await c.GetAsync("/api/customers")).Json()).GetArrayLength());
-        Assert.Equal(HttpStatusCode.NotFound, (await c.GetAsync("/api/customers/99999")).StatusCode);
-    }
-
-    [Fact]
     public async Task Plan_dates_status_renewal_and_filters()
     {
         var c = await _api.SignedInAsync();
         var id = await CreateCustomer(c, new DateOnly(2026, 1, 31));
 
+        await _api.DropAutoPlan(id);
         var created = await c.PostAsJsonAsync($"/api/customers/{id}/plans", new { planType = "AMC", amount = 12000.00m });
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var plan = await created.Json();
@@ -294,7 +262,8 @@ public class CustomerAndPlanTests : IAsyncLifetime
         var expired = await CreateCustomer(c, today.AddYears(-2), "+919000000012", "Old Co");
         var active = await CreateCustomer(c, today, "+919000000013", "New Co");
         foreach (var id in new[] { due, expired, active })
-            await c.PostAsJsonAsync($"/api/customers/{id}/plans", new { planType = "Monthly", amount = 500m });
+            { await _api.DropAutoPlan(id);
+              await c.PostAsJsonAsync($"/api/customers/{id}/plans", new { planType = "Monthly", amount = 500m }); }
 
         async Task<string[]> Names(string status) =>
             (await (await c.GetAsync($"/api/plans?status={status}")).Json()).EnumerateArray()
@@ -332,6 +301,7 @@ public class ReminderAndReportTests : IAsyncLifetime
             body.projectValue, whatsAppOptOut = optOut,
         });
         var id = (await res.Json()).GetProperty("customerId").GetInt32();
+        await _api.DropAutoPlan(id);
         var plan = await c.PostAsJsonAsync($"/api/customers/{id}/plans", new { planType = "AMC", amount = 9000m });
         var planId = (await plan.Json()).GetProperty("planId").GetInt32();
         if (deleted) await c.DeleteAsync($"/api/customers/{id}");

@@ -1,6 +1,7 @@
 using AmcTracker.Application.Abstractions;
 using AmcTracker.Application.Dtos;
 using AmcTracker.Domain.Entities;
+using AmcTracker.Domain.Services;
 using AmcTracker.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,18 +16,24 @@ internal class CustomerRepository(AppDbContext db) : ICustomerRepository
         return q.FirstOrDefaultAsync(c => c.CustomerId == id, ct);
     }
 
-    public Task<List<Customer>> ListAsync(string? search, bool? active, CancellationToken ct = default)
+    public async Task<(List<Customer> Items, int TotalCount)> SearchAsync(
+        string? search, bool? active, int page, int pageSize, CancellationToken ct = default)
     {
-        IQueryable<Customer> q = db.Customers.AsNoTracking().Include(c => c.Plans);
+        IQueryable<Customer> q = db.Customers.AsNoTracking();
         if (active is { } a) q = q.Where(c => c.IsActive == a);
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var s = search.Trim();
-            q = q.Where(c => c.CustomerName.Contains(s) || c.Phone.Contains(s)
-                || (c.Location != null && c.Location.Contains(s))
-                || (c.ProjectName != null && c.ProjectName.Contains(s)));
+            // Lower-case on both sides so the match does not depend on the column collation.
+            var s = search.Trim().ToLower();
+            var phone = PhoneNumber.Normalize(search).ToLower();
+            q = q.Where(c => c.CustomerName.ToLower().Contains(s)
+                || c.Phone.Contains(phone)
+                || (c.ProjectName != null && c.ProjectName.ToLower().Contains(s)));
         }
-        return q.OrderBy(c => c.CustomerName).ThenBy(c => c.CustomerId).ToListAsync(ct);
+        var total = await q.CountAsync(ct);
+        var items = await q.OrderBy(c => c.CustomerName).ThenBy(c => c.CustomerId)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        return (items, total);
     }
 
     public void Add(Customer customer) => db.Customers.Add(customer);
@@ -36,6 +43,11 @@ internal class PlanRepository(AppDbContext db) : IPlanRepository
 {
     public Task<Plan?> GetByIdAsync(int id, CancellationToken ct = default) =>
         db.Plans.Include(p => p.Customer).FirstOrDefaultAsync(p => p.PlanId == id, ct);
+
+    public Task<Plan?> GetLatestOpenForCustomerAsync(int customerId, CancellationToken ct = default) =>
+        db.Plans.Where(p => p.CustomerId == customerId && p.Status != PlanStatus.Renewed)
+            .OrderByDescending(p => p.StartDate).ThenByDescending(p => p.PlanId)
+            .FirstOrDefaultAsync(ct);
 
     public Task<List<Plan>> ListAsync(PlanFilter f, DateOnly today, CancellationToken ct = default)
     {
@@ -82,8 +94,13 @@ internal class PlanRepository(AppDbContext db) : IPlanRepository
         db.Plans.Include(p => p.Customer)
             .Where(p => p.Status != PlanStatus.Renewed
                 && p.Customer!.IsActive && !p.Customer.WhatsAppOptOut
-                && p.NotificationDate <= today && today <= p.EndDate
-                && !db.Reminders.Any(r => r.PlanId == p.PlanId && r.Status == ReminderStatus.Sent))
+                && (
+                    // Yearly: from the notification date to the end, until one reminder is Sent.
+                    (p.PlanType == PlanType.AMC
+                        && p.NotificationDate <= today && today <= p.EndDate
+                        && !db.Reminders.Any(r => r.PlanId == p.PlanId && r.Status == ReminderStatus.Sent))
+                    // Monthly: any plan in its year; the service picks the open month and checks it.
+                    || (p.PlanType == PlanType.Monthly && p.StartDate <= today && today <= p.EndDate)))
             .OrderBy(p => p.NotificationDate).ThenBy(p => p.PlanId)
             .ToListAsync(ct);
 

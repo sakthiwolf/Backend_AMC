@@ -56,6 +56,12 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
+                    b.Property<string>("PlanType")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)")
+                        .HasDefaultValue("AMC");
+
                     b.Property<string>("ProjectName")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)");
@@ -74,7 +80,23 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
 
                     b.HasKey("CustomerId");
 
-                    b.ToTable("Customers", (string)null);
+                    b.HasIndex("CustomerName")
+                        .HasDatabaseName("IX_Customers_CustomerName");
+
+                    b.HasIndex("IsActive")
+                        .HasDatabaseName("IX_Customers_IsActive");
+
+                    b.HasIndex("Phone")
+                        .HasDatabaseName("IX_Customers_Phone");
+
+                    b.ToTable("Customers", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Customers_Phone_E164", "LEFT([Phone], 1) = '+' AND LEN([Phone]) BETWEEN 9 AND 16 AND SUBSTRING([Phone], 2, 1) <> '0' AND SUBSTRING([Phone], 2, 20) NOT LIKE '%[^0-9]%'");
+
+                            t.HasCheckConstraint("CK_Customers_PlanType", "[PlanType] IN ('AMC', 'Monthly')");
+
+                            t.HasCheckConstraint("CK_Customers_ProjectValue_NonNegative", "[ProjectValue] IS NULL OR [ProjectValue] >= 0");
+                        });
                 });
 
             modelBuilder.Entity("AmcTracker.Domain.Entities.Payment", b =>
