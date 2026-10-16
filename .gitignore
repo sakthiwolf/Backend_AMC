@@ -1,7 +1,8 @@
-.venv/
+bin/
+obj/
 .env
-__pycache__/
-*.pyc
-
-.env.production
-dist/
+.env.*
+appsettings.*.local.json
+logs/
+publish/
+TestResults/
