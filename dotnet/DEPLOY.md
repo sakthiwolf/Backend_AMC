@@ -9,8 +9,9 @@ Production settings are environment variables (see README). Never commit them. C
 1. **Build** (on your machine or CI):
    ```bash
    cd backend/dotnet
-   dotnet publish src/AmcTracker.Api -c Release -o ./publish
+   dotnet publish src/AmcTracker.Api -c Release -r linux-x64 --self-contained false -o ./publish
    ```
+   `-r linux-x64` keeps only the Linux native libraries (without it the output carries every OS, about 170 MB extra). Do not zip or copy old build folders into `publish/`.
 2. **Upload** the contents of `publish/` to `/var/www/vhosts/<domain>/api` (so `AmcTracker.Api.dll` is directly inside).
 3. **Install the runtime**: `dotnet --list-runtimes` must show `Microsoft.AspNetCore.App 10.x`. Install it from Microsoft's package feed if not.
 4. **Environment file** `/etc/amc-api.env` (outside the web folder, `chmod 600`, owned by the service user):
@@ -70,7 +71,7 @@ Production settings are environment variables (see README). Never commit them. C
 ## B. IIS on Windows (only if IIS is still in use)
 
 1. Install the **.NET 10 Hosting Bundle** (it includes the runtime and the IIS ASP.NET Core Module), then run `iisreset`.
-2. `dotnet publish src/AmcTracker.Api -c Release -o ./publish` and copy `publish/` to e.g. `C:\inetpub\amc-api`. The publish output already contains a `web.config` using the ASP.NET Core Module (in-process hosting).
+2. `dotnet publish src/AmcTracker.Api -c Release -r win-x64 --self-contained false -o ./publish` and copy `publish/` to e.g. `C:\inetpub\amc-api`. The publish output already contains a `web.config` using the ASP.NET Core Module (in-process hosting).
 3. IIS Manager: new application pool with **.NET CLR version = No Managed Code**, *Start Mode* = AlwaysRunning, *Idle Time-out* = 0 (keeps the 09:00 reminder job alive). Create the site on that pool with host name `api.<company-domain>` and an HTTPS binding (win-acme gives free Let's Encrypt certificates).
 4. Give `IIS AppPool\<pool name>` Modify on `C:\inetpub\amc-api\logs` and Read on the rest.
 5. Settings: set the environment variables from section A, step 4 on the pool (*Configuration Editor*, `system.webServer/aspNetCore`, `environmentVariables`) or in the machine environment. Do not leave secrets in `web.config` inside the repo.
