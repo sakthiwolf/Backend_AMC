@@ -103,3 +103,23 @@ Nothing depends on them being settled; each spot has a `TODO(open decision …)`
 - **Scheduler caveat:** the job lives in the web process. On IIS the app pool must stay alive (AlwaysRunning, idle timeout 0), same as the Python IIS notes. If the process is down at 09:00 the next run catches up (item 7).
 - `dotnet-ef` global tool is 10.0.8 while the runtime is 10.0.13 (harmless warning).
 - The commit message in your step 9 brief was cut off after "Replace FastAPI backend with .NET 10 Clean"; I'll need the rest, or I'll use "Replace FastAPI backend with .NET 10 Clean Architecture backend".
+
+## Module 4 (Dashboard): fields removed or changed
+
+The dashboard shows counts and dates only. These old fields no longer exist; nothing in the app or the tests still reads them (searched `lib/`, `test/`, the controllers and the integration tests).
+
+| Endpoint | Removed or changed | Replaced by |
+|---|---|---|
+| `GET /api/dashboard/summary` | `monthlyRevenue` (removed: no revenue anywhere on the dashboard) | nothing |
+| | `dueForRenewalCount` | `dueCount` |
+| | `dueIn30DaysCount` (it counted reminder dates within 30 days) | `endingIn30DaysCount` (not renewed, **end date** from today through today + 30) |
+| | (new) | `customerCount`, `asOf` |
+| `GET /api/dashboard/upcoming` | the reply was a bare array of full plans (with `amount`, `startDate`, `createdAt`...) and `days` defaulted to 30 | `{ "items": [...] }` with `planId, customerId, customerName, phone, projectName, planType, endDate, reminderDate, status, reminderStatus`; `days` defaults to 7 and must be 1 to 90 (else 422) |
+| | selected plans by reminder date only | due plans, plus plans whose reminder date is within `days` |
+| `GET /api/dashboard/monthly-renewals` | `[{ year, month, label, count }]`, a bare array | `{ "months": [{ month: "2026-10", endingCount, renewedCount, pendingCount }] }`; `months` defaults to 12 (1 to 24) |
+
+Readers of the old shapes, now updated:
+- The Module 3 reminder queue called `/dashboard/upcoming` and expected plans with `amount`. It now reads the new items (`RemindersRepository.upcoming`) and keeps only plans with a reminder date of today or later, as before.
+- The header bell badge counted sample data. It now counts those same plans, from the dashboard's shared request.
+
+New, to make a card and its list agree: `GET /api/plans?endingWithinDays=N` (1 to 366). The "Ending in 30 days" card count and the list it opens use the same rule (`PlanSpec.EndsWithin`).

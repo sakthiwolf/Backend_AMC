@@ -13,8 +13,12 @@ public class Customer
     public DateOnly InstallationDate { get; set; }
     public string? ProjectName { get; set; }
     public decimal? ProjectValue { get; set; }
-    /// <summary>Yearly (AMC) or Monthly. Decides when WhatsApp reminders go out (see ReminderSchedule).</summary>
+    /// <summary>AMC or Monthly: the type of the plan created with the customer (see PlanScheduleCalculator).</summary>
     public PlanType PlanType { get; set; } = PlanType.AMC;
+    /// <summary>When the current plan ends (from its type and start date). Calculated, never typed.</summary>
+    public DateOnly? PlanEndDate { get; set; }
+    /// <summary>The current plan's WhatsApp reminder date. Calculated, never typed.</summary>
+    public DateOnly? ReminderDate { get; set; }
     public bool WhatsAppOptOut { get; set; }
     /// <summary>Soft delete only: false means deleted.</summary>
     public bool IsActive { get; set; } = true;

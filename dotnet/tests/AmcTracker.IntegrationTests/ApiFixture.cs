@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Data.Common;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -7,22 +9,53 @@ using AmcTracker.Infrastructure.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AmcTracker.IntegrationTests;
 
-/// <summary>Records what the reminder job tried to send; can be told to fail.</summary>
-public class FakeWhatsAppSender : IWhatsAppSender
+/// <summary>Business clock the tests can move: <see cref="Today"/> is real IST today unless <see cref="Fixed"/> is set.</summary>
+public class TestClock : IClock
 {
-    public List<WhatsAppReminderMessage> Sent { get; } = [];
-    public bool Fail { get; set; }
+    public DateOnly? Fixed { get; set; }
+    public DateTime UtcNow => DateTime.UtcNow;
+    public DateOnly Today => Fixed ?? DateOnly.FromDateTime(
+        TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZones.Resolve("Asia/Kolkata")));
+}
 
-    public Task<WhatsAppSendResult> SendRenewalReminderAsync(WhatsAppReminderMessage m, CancellationToken ct = default)
+/// <summary>Records the text of every SQL statement the API runs, so a test can count them.</summary>
+public sealed class SqlLog : DbCommandInterceptor
+{
+    private readonly ConcurrentQueue<string> _commands = new();
+
+    public IReadOnlyList<string> Commands => [.. _commands];
+
+    /// <summary>Statements that are not the login-token check (which reads [Users] on every request).</summary>
+    public IReadOnlyList<string> Report => [.. _commands.Where(c => !c.Contains("[Users]"))];
+
+    public void Clear() => _commands.Clear();
+
+    public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken ct = default)
     {
-        Sent.Add(m);
-        return Task.FromResult(Fail ? new WhatsAppSendResult(false, "HTTP 400: simulated failure") : new WhatsAppSendResult(true));
+        _commands.Enqueue(command.CommandText);
+        return base.ReaderExecutingAsync(command, eventData, result, ct);
+    }
+
+    public override InterceptionResult<DbDataReader> ReaderExecuting(
+        DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+    {
+        _commands.Enqueue(command.CommandText);
+        return base.ReaderExecuting(command, eventData, result);
+    }
+
+    public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<object> result, CancellationToken ct = default)
+    {
+        _commands.Enqueue(command.CommandText);
+        return base.ScalarExecutingAsync(command, eventData, result, ct);
     }
 }
 
@@ -36,7 +69,10 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
     public const string Password = "correct-horse-battery";
     public const string Fingerprint = "11111111-1111-4111-8111-111111111111";
 
+    /// <summary>Records every send; never contacts WhatsApp. Set FailWith to simulate errors.</summary>
     public FakeWhatsAppSender Whatsapp { get; } = new();
+    public TestClock Clock { get; } = new();
+    public SqlLog Sql { get; } = new();
     public IConfiguration TestConfig { get; } = new ConfigurationBuilder()
         .SetBasePath(AppContext.BaseDirectory)
         .AddJsonFile("appsettings.json", optional: true)
@@ -47,8 +83,8 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         TestConfig.GetConnectionString("Test")
         ?? throw new InvalidOperationException("ConnectionStrings:Test is not configured.");
 
-    public DateOnly Today { get; } = DateOnly.FromDateTime(
-        TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZones.Resolve("Asia/Kolkata")));
+    /// <summary>The API's "today" (moves with <see cref="Clock"/>).</summary>
+    public DateOnly Today => Clock.Today;
 
     public ApiFixture()
     {
@@ -61,6 +97,8 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("ConnectionStrings__Default", ConnectionString);
         Environment.SetEnvironmentVariable("Jwt__Secret", "integration-test-signing-key-0123456789abcdef");
         Environment.SetEnvironmentVariable("Reminders__Enabled", "false");
+        Environment.SetEnvironmentVariable("Reminders__AdminUsernames__0", "staff");
+        Environment.SetEnvironmentVariable("WhatsApp__UseFake", "true");
         Environment.SetEnvironmentVariable("Serilog__WriteTo__0__Args__path",
             Path.Combine(Path.GetTempPath(), "amc-tests", "log-.txt"));
     }
@@ -72,6 +110,9 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         {
             s.RemoveAll<IWhatsAppSender>();
             s.AddSingleton<IWhatsAppSender>(Whatsapp);
+            s.RemoveAll<IClock>();
+            s.AddSingleton<IClock>(Clock);
+            s.ConfigureDbContext<AppDbContext>(o => o.AddInterceptors(Sql));
         });
     }
 
@@ -89,8 +130,8 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
     /// <summary>Empties every table so each test starts clean.</summary>
     public async Task ResetAsync()
     {
-        Whatsapp.Sent.Clear();
-        Whatsapp.Fail = false;
+        Whatsapp.Clear();
+        Clock.Fixed = null;
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.ExecuteSqlRawAsync(

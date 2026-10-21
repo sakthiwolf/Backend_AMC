@@ -36,6 +36,11 @@ public class CustomersController(ICustomerService customers, PlanService plans) 
         return NoContent();
     }
 
+    /// <summary>The customer's plans, newest first.</summary>
+    [HttpGet("{id:int}/plans")]
+    public Task<IReadOnlyList<PlanDto>> Plans(int id, CancellationToken ct) => plans.ListForCustomerAsync(id, ct);
+
+    /// <summary>Body { planType, amount, startDate? }. 409 "overlapping_plan" if an open plan of that type exists.</summary>
     [HttpPost("{id:int}/plans")]
     public async Task<IActionResult> CreatePlan(int id, CreatePlanRequest request, CancellationToken ct)
     {

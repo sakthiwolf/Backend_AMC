@@ -66,9 +66,9 @@ public abstract class CustomerFieldsValidator<T> : AbstractValidator<T> where T 
             .WithMessage("Choose Monthly or Yearly.");
 
         RuleFor(x => x.ProjectValue).Cascade(CascadeMode.Stop)
-            .Must(v => v is null || v >= 0).WithMessage("Project value cannot be negative.")
-            .Must(v => v is null || v < 10_000_000_000m).WithMessage("Project value is too large.")
-            .Must(v => v is null || decimal.Round(v.Value, 2) == v).WithMessage("Project value can have at most 2 decimals.");
+            .Must(v => v is null || v >= 0).WithMessage("Amount cannot be negative.")
+            .Must(v => v is null || v < 10_000_000_000m).WithMessage("Amount is too large.")
+            .Must(v => v is null || decimal.Round(v.Value, 2) == v).WithMessage("Amount can have at most 2 decimals.");
     }
 }
 
@@ -76,19 +76,59 @@ public class CreateCustomerRequestValidator(IClock clock) : CustomerFieldsValida
 
 public class UpdateCustomerRequestValidator(IClock clock) : CustomerFieldsValidator<UpdateCustomerRequest>(clock);
 
+/// <summary>Plan amount and start-date rules shared by create and renew.</summary>
+internal static class PlanRules
+{
+    /// <summary>How far ahead a plan may start.</summary>
+    public const int MaxFutureYears = 1;
+
+    /// <summary>Zero or more, at most two decimals, fits decimal(12,2). Null is allowed here.</summary>
+    public static void Amount<T>(IRuleBuilderInitial<T, decimal?> rule) => rule.Cascade(CascadeMode.Stop)
+        .Must(v => v is null || v >= 0).WithMessage("Amount cannot be negative.")
+        .Must(v => v is null || v < 10_000_000_000m).WithMessage("Amount is too large.")
+        .Must(v => v is null || decimal.Round(v.Value, 2) == v).WithMessage("Amount can have at most 2 decimals.");
+
+    public static void StartDate<T>(IRuleBuilder<T, DateOnly?> rule, IClock clock) => rule
+        .Must(d => d is null || d.Value <= clock.Today.AddYears(MaxFutureYears))
+        .WithMessage("Start date cannot be more than a year in the future.");
+}
+
 public class CreatePlanRequestValidator : AbstractValidator<CreatePlanRequest>
 {
-    public CreatePlanRequestValidator()
+    public CreatePlanRequestValidator(IClock clock)
     {
-        RuleFor(x => x.PlanType).NotNull().IsInEnum();
-        RuleFor(x => x.Amount).NotNull().GreaterThan(0).LessThan(10_000_000_000m);
+        RuleFor(x => x.PlanType).Cascade(CascadeMode.Stop)
+            .NotNull().WithMessage("Choose AMC or Monthly.")
+            .IsInEnum().WithMessage("Choose AMC or Monthly.");
+        RuleFor(x => x.Amount).NotNull().WithMessage("Enter the amount.");
+        PlanRules.Amount(RuleFor(x => x.Amount));
+        PlanRules.StartDate(RuleFor(x => x.StartDate), clock);
     }
 }
 
+/// <summary>A renewal carries its payment: when, how much, and how it was paid.</summary>
 public class RenewPlanRequestValidator : AbstractValidator<RenewPlanRequest>
 {
-    public RenewPlanRequestValidator()
+    public RenewPlanRequestValidator(IClock clock)
     {
-        RuleFor(x => x.Amount).GreaterThan(0).LessThan(10_000_000_000m);
+        RuleFor(x => x.PaidOn).Cascade(CascadeMode.Stop)
+            .NotNull().WithMessage("Enter the date the payment was received.")
+            .Must(d => d!.Value <= clock.Today).WithMessage("The payment date cannot be in the future.");
+
+        RuleFor(x => x.Amount).Cascade(CascadeMode.Stop)
+            .NotNull().WithMessage("Enter the amount received.")
+            .Must(v => v!.Value > 0).WithMessage("The amount received must be more than 0.")
+            .Must(v => v!.Value < 10_000_000_000m).WithMessage("Amount is too large.")
+            .Must(v => decimal.Round(v!.Value, 2) == v).WithMessage("Amount can have at most 2 decimals.");
+
+        RuleFor(x => x.Mode).Cascade(CascadeMode.Stop)
+            .NotNull().WithMessage("Choose Cash, UPI or Bank.")
+            .IsInEnum().WithMessage("Choose Cash, UPI or Bank.");
+
+        RuleFor(x => x.Note).Must(n => n is null || n.Trim().Length <= 200)
+            .WithMessage("Note can be at most 200 characters.");
+
+        PlanRules.Amount(RuleFor(x => x.PlanAmount)); // the new plan's rate: 0 or more
+        PlanRules.StartDate(RuleFor(x => x.StartDate), clock);
     }
 }

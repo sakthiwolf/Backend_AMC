@@ -19,7 +19,7 @@ builder.Host.UseSerilog((ctx, lc) => lc.ReadFrom.Configuration(ctx.Configuration
 var jwt = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
 
 builder.Services.AddApplication();
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.IsDevelopment());
 
 builder.Services
     .AddControllers()
@@ -73,13 +73,18 @@ builder.Services
                 ctx.Response.Headers.WWWAuthenticate = "Bearer";
                 return ApiErrors.Write(ctx.HttpContext, StatusCodes.Status401Unauthorized, code, message);
             },
+            OnForbidden = ctx => ApiErrors.Write(
+                ctx.HttpContext, StatusCodes.Status403Forbidden, "forbidden", "Only an administrator can do this."),
         };
     });
 
 // Every endpoint needs a valid token unless marked [AllowAnonymous].
+builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection(AdminOptions.Section));
+builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, AdminHandler>();
 builder.Services.AddAuthorizationBuilder()
     .SetFallbackPolicy(new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser().Build());
+        .RequireAuthenticatedUser().Build())
+    .AddPolicy(AdminRequirement.Policy, p => p.RequireAuthenticatedUser().AddRequirements(new AdminRequirement()));
 
 // Development only: lets the Flutter web build (served from localhost on a random port) call the API.
 builder.Services.AddCors(o => o.AddPolicy("DevWeb", p => p
@@ -156,6 +161,26 @@ if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
 }
 
 await SeedUser.RunAsync(app);
+
+// Warm-up: build the EF model, open the SQL connection pool and JIT the password hasher once at
+// start, so the first login after an IIS app-pool start or recycle is not several seconds slower.
+app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
+{
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Users.AsNoTracking().AnyAsync();
+        await db.Customers.AsNoTracking().Take(1).ToListAsync();
+        await db.UserDevices.AsNoTracking().Take(1).ToListAsync();
+        var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
+        hasher.Verify(hasher.Hash("warm-up"), "warm-up");
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Start-up warm-up failed; the first request will be slower.");
+    }
+}));
 
 app.UseAuthentication();
 app.UseAuthorization();

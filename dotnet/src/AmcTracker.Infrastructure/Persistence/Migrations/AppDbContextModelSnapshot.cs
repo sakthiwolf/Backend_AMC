@@ -56,6 +56,9 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
+                    b.Property<DateOnly?>("PlanEndDate")
+                        .HasColumnType("date");
+
                     b.Property<string>("PlanType")
                         .IsRequired()
                         .HasMaxLength(10)
@@ -69,6 +72,9 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                     b.Property<decimal?>("ProjectValue")
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(12,2)");
+
+                    b.Property<DateOnly?>("ReminderDate")
+                        .HasColumnType("date");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -111,9 +117,19 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(12,2)");
 
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
                     b.Property<string>("Mode")
+                        .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
                     b.Property<DateOnly>("PaidOn")
                         .HasColumnType("date");
@@ -125,7 +141,12 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PlanId");
 
-                    b.ToTable("Payments", (string)null);
+                    b.ToTable("Payments", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Payments_Amount_Positive", "[Amount] > 0");
+
+                            t.HasCheckConstraint("CK_Payments_Mode", "[Mode] IN ('Cash', 'UPI', 'Bank')");
+                        });
                 });
 
             modelBuilder.Entity("AmcTracker.Domain.Entities.Plan", b =>
@@ -151,9 +172,6 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                     b.Property<DateOnly>("EndDate")
                         .HasColumnType("date");
 
-                    b.Property<DateOnly>("NotificationDate")
-                        .HasColumnType("date");
-
                     b.Property<string>("PlanType")
                         .IsRequired()
                         .HasMaxLength(10)
@@ -162,13 +180,11 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                     b.Property<int?>("PreviousPlanId")
                         .HasColumnType("int");
 
-                    b.Property<DateOnly>("StartDate")
+                    b.Property<DateOnly>("ReminderDate")
                         .HasColumnType("date");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
+                    b.Property<DateOnly>("StartDate")
+                        .HasColumnType("date");
 
                     b.HasKey("PlanId");
 
@@ -176,11 +192,20 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("EndDate");
 
-                    b.HasIndex("NotificationDate");
+                    b.HasIndex("PreviousPlanId")
+                        .IsUnique()
+                        .HasFilter("[PreviousPlanId] IS NOT NULL");
 
-                    b.HasIndex("PreviousPlanId");
+                    b.HasIndex("ReminderDate");
 
-                    b.ToTable("Plans", (string)null);
+                    b.ToTable("Plans", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Plans_Amount_NonNegative", "[Amount] >= 0");
+
+                            t.HasCheckConstraint("CK_Plans_Dates", "[StartDate] < [ReminderDate] AND [ReminderDate] < [EndDate]");
+
+                            t.HasCheckConstraint("CK_Plans_PlanType", "[PlanType] IN ('AMC', 'Monthly')");
+                        });
                 });
 
             modelBuilder.Entity("AmcTracker.Domain.Entities.Reminder", b =>
@@ -190,6 +215,11 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                         .HasColumnType("int");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("ReminderId"));
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
 
                     b.Property<string>("Channel")
                         .IsRequired()
@@ -222,7 +252,12 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("UQ_Reminder_PlanDate");
 
-                    b.ToTable("Reminders", (string)null);
+                    b.ToTable("Reminders", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Reminders_Attempts", "[Attempts] >= 0");
+
+                            t.HasCheckConstraint("CK_Reminders_Status", "[Status] IN ('Pending', 'Sent', 'Failed')");
+                        });
                 });
 
             modelBuilder.Entity("AmcTracker.Domain.Entities.User", b =>
@@ -344,8 +379,8 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.HasOne("AmcTracker.Domain.Entities.Plan", "PreviousPlan")
-                        .WithMany()
-                        .HasForeignKey("PreviousPlanId")
+                        .WithOne("Renewal")
+                        .HasForeignKey("AmcTracker.Domain.Entities.Plan", "PreviousPlanId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Customer");
@@ -383,6 +418,8 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("AmcTracker.Domain.Entities.Plan", b =>
                 {
                     b.Navigation("Reminders");
+
+                    b.Navigation("Renewal");
                 });
 
             modelBuilder.Entity("AmcTracker.Domain.Entities.User", b =>

@@ -20,6 +20,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Shared with the Flutter tests, so the app's date preview and the server always agree. -->
+    <None Include="..\..\..\..\testdata\plan_schedule_cases.json" Link="plan_schedule_cases.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\AmcTracker.Domain\AmcTracker.Domain.csproj" />
     <ProjectReference Include="..\..\src\AmcTracker.Application\AmcTracker.Application.csproj" />
   </ItemGroup>

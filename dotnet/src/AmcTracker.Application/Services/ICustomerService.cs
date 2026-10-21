@@ -7,7 +7,7 @@ public interface ICustomerService
 {
     /// <summary>
     /// Matches name, phone and project name (case-insensitive). <paramref name="active"/> null returns all.
-    /// Page size defaults to 20 and is capped at 100.
+    /// Newest customers first. Page size defaults to 20 and is capped at 100.
     /// </summary>
     Task<PagedResult<CustomerDto>> SearchAsync(
         string? search, bool? active, int? page, int? pageSize, CancellationToken ct = default);
