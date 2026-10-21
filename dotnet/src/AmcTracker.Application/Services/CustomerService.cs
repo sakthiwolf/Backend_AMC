@@ -4,7 +4,6 @@ using AmcTracker.Application.Dtos;
 using AmcTracker.Domain.Entities;
 using AmcTracker.Domain.Services;
 using FluentValidation;
-using FluentValidation.Results;
 
 namespace AmcTracker.Application.Services;
 
@@ -37,7 +36,7 @@ public class CustomerService(
 
     public async Task<CustomerDto> CreateAsync(CreateCustomerRequest req, CancellationToken ct = default)
     {
-        Check(await createValidator.ValidateAsync(req, ct));
+        Validation.ThrowIfInvalid(await createValidator.ValidateAsync(req, ct));
         var c = new Customer { CreatedAt = clock.UtcNow, IsActive = true };
         Apply(c, req);
         customers.Add(c);
@@ -48,22 +47,26 @@ public class CustomerService(
 
     public async Task<CustomerDto> UpdateAsync(int id, UpdateCustomerRequest req, CancellationToken ct = default)
     {
-        Check(await updateValidator.ValidateAsync(req, ct));
+        Validation.ThrowIfInvalid(await updateValidator.ValidateAsync(req, ct));
         var c = await customers.GetByIdAsync(id, includePlans: false, ct)
             ?? throw AppException.NotFound("Customer");
+        var previousType = c.PlanType;
         Apply(c, req);
         c.UpdatedAt = clock.UtcNow;
 
-        // Switching Monthly <-> Yearly changes the plan the reminders run on.
-        var plan = await plans.GetLatestOpenForCustomerAsync(c.CustomerId, ct);
+        // The plan the customer form describes: their current plan of the type they had.
+        var plan = await plans.GetCurrentForCustomerAsync(c.CustomerId, previousType, ct);
         if (plan is null) AddPlan(c); // customers created before plans existed
         else
         {
-            if (plan.PlanType != c.PlanType) plan.PlanType = c.PlanType;
+            // Switching AMC <-> Monthly changes the plan's length and reminder date.
+            if (plan.PlanType != c.PlanType
+                && await plans.HasOpenPlanAsync(c.CustomerId, c.PlanType, plan.PlanId, ct))
+                throw PlanService.OverlappingPlan(c.PlanType);
             // The first plan follows the installation date; renewals keep their own start.
-            if (plan.PreviousPlanId is null && plan.StartDate != c.InstallationDate)
-                plan.Reschedule(c.InstallationDate, clock.Today);
-            SetDates(c, plan);
+            var start = plan.PreviousPlanId is null ? c.InstallationDate : plan.StartDate;
+            if (plan.PlanType != c.PlanType || plan.StartDate != start) plan.Reschedule(c.PlanType, start);
+            CustomerPlanDates.Set(c, plan);
         }
 
         await uow.SaveChangesAsync(ct);
@@ -76,19 +79,11 @@ public class CustomerService(
     /// </summary>
     private void AddPlan(Customer c)
     {
-        var plan = Plan.Create(
-            c.CustomerId, c.PlanType, c.ProjectValue ?? 0m, c.InstallationDate, clock.Today);
+        var plan = Plan.Create(c.CustomerId, c.PlanType, c.ProjectValue ?? 0m, c.InstallationDate);
         plan.CreatedAt = clock.UtcNow;
         plan.Customer = c;
         plans.Add(plan);
-        SetDates(c, plan);
-    }
-
-    /// <summary>The end date and next reminder date shown on the customer, calculated from the plan.</summary>
-    private void SetDates(Customer c, Plan plan)
-    {
-        c.PlanEndDate = plan.EndDate;
-        c.ReminderDate = ReminderSchedule.NextScheduled(plan, clock.Today);
+        CustomerPlanDates.Set(c, plan);
     }
 
     /// <summary>Soft delete: sets IsActive = false. Rows with plans or reminders are never removed.</summary>
@@ -99,18 +94,6 @@ public class CustomerService(
         c.IsActive = false;
         c.UpdatedAt = clock.UtcNow;
         await uow.SaveChangesAsync(ct);
-    }
-
-    /// <summary>Turns validation failures into the 422 "validation_failed" error with per-field details.</summary>
-    private static void Check(ValidationResult result)
-    {
-        if (result.IsValid) return;
-        throw AppException.ValidationFailed(result.Errors
-            .Select(e => new FieldError(
-                char.ToLowerInvariant(e.PropertyName[0]) + e.PropertyName[1..],
-                e.ErrorMessage,
-                e.ErrorCode is "PredicateValidator" or null ? "invalid" : e.ErrorCode))
-            .ToList());
     }
 
     private static void Apply(Customer c, ICustomerFields r)

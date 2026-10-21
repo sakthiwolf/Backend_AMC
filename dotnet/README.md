@@ -49,17 +49,20 @@ Schema changes go through EF migrations only. Never edit tables by hand in produ
 | `Auth__MaxFailedLogins`, `Auth__LockoutMinutes` | no (5, 15) | login lockout |
 | `WhatsApp__Token` | for reminders | Cloud API access token |
 | `WhatsApp__PhoneNumberId` | for reminders | sender phone-number id |
-| `WhatsApp__TemplateName`, `WhatsApp__LanguageCode` | no | approved template (body: customer name, project name, end date) |
-| `WhatsApp__TestRecipient` | no | **testing**: send every reminder to this E.164 number instead of customers |
+| `WhatsApp__LanguageCode` | no (`en`) | template language |
+| `WhatsApp__UseFake` | no (true in Development, else false) | record sends in memory instead of calling WhatsApp |
+| `Reminders__TemplateName` | no (`amc_renewal_reminder`) | approved template (body: customer name, project name, end date) |
+| `Reminders__TestMode`, `Reminders__TestPhone` | no (test mode is always on in Development) | **testing**: every reminder goes to `TestPhone` (E.164), never to customers; with no `TestPhone` nothing is sent |
+| `Reminders__AdminUsernames__0`, `__1` ... | for `POST /api/reminders/run` | usernames allowed to trigger a run by hand (403 for everyone else) |
 | `Reminders__Enabled`, `Reminders__RunAt` | no (true, `09:00`) | daily job, local time in `Clock__TimeZone` |
 | `Clock__TimeZone` | no | default `Asia/Kolkata` |
 | `Database__MigrateOnStartup` | no (false) | apply EF migrations at startup |
 | `Swagger__Enabled` | no (false) | expose `/swagger` |
 | `Kestrel__Endpoints__Http__Url` | no | default `http://127.0.0.1:5000` |
 
-Logs: Serilog rolling daily files in `logs/amc-api-YYYYMMDD.log` (30 days kept, 50 MB cap per file). Phone numbers are masked in logs and tokens are never logged.
+Logs: Serilog rolling daily files in `logs/amc-api-YYYYMMDD.log` (30 days kept, 50 MB cap per file). Reminder logs carry plan and reminder ids only; phone numbers, message text and tokens are never logged.
 
-Before the first real send, set `WhatsApp__TestRecipient` to your own number and call `POST /api/reminders/run`.
+Before the first real send, set `Reminders__TestMode=true`, `Reminders__TestPhone` to your own number and `Reminders__AdminUsernames__0` to your username, then call `POST /api/reminders/run`.
 
 ## Integration tests
 

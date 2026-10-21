@@ -20,3 +20,24 @@ public class AppException(int statusCode, string code, string message) : Excepti
 
     public static AppException Conflict(string code, string message) => new(409, code, message);
 }
+
+/// <summary>A save hit a unique index. <see cref="Exception.Message"/> names the index.</summary>
+public class DuplicateKeyException(string message, Exception inner) : Exception(message, inner)
+{
+    public bool IsFor(string indexName) => Message.Contains(indexName, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>Turns FluentValidation failures into the 422 "validation_failed" error with per-field details.</summary>
+public static class Validation
+{
+    public static void ThrowIfInvalid(FluentValidation.Results.ValidationResult result)
+    {
+        if (result.IsValid) return;
+        throw AppException.ValidationFailed(result.Errors
+            .Select(e => new FieldError(
+                char.ToLowerInvariant(e.PropertyName[0]) + e.PropertyName[1..],
+                e.ErrorMessage,
+                e.ErrorCode is "PredicateValidator" or null ? "invalid" : e.ErrorCode))
+            .ToList());
+    }
+}

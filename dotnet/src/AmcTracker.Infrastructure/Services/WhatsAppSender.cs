@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -15,46 +14,37 @@ public class WhatsAppOptions
     public string ApiVersion { get; set; } = "v21.0";
     public string Token { get; set; } = "";
     public string PhoneNumberId { get; set; } = "";
-    /// <summary>Name of the approved template. Body parameters: customer name, project name, end date.</summary>
-    public string TemplateName { get; set; } = "amc_renewal_reminder";
     public string LanguageCode { get; set; } = "en";
-    /// <summary>Testing aid: when set (E.164), every message goes to this number instead of the customer.</summary>
-    public string? TestRecipient { get; set; }
+    /// <summary>
+    /// Use <see cref="FakeWhatsAppSender"/> (records, never sends). Defaults to true in Development and false
+    /// elsewhere. The template name and test phone live under "Reminders".
+    /// </summary>
+    public bool? UseFake { get; set; }
 }
 
-/// <summary>WhatsApp Business Cloud API client (typed HttpClient). Never logs tokens or full numbers.</summary>
-public class WhatsAppSender(HttpClient http, IOptions<WhatsAppOptions> options) : IWhatsAppSender
+/// <summary>WhatsApp Business Cloud API client (typed HttpClient). Never logs tokens, numbers or message text.</summary>
+public class WhatsAppCloudSender(HttpClient http, IOptions<WhatsAppOptions> options) : IWhatsAppSender
 {
     private readonly WhatsAppOptions _opt = options.Value;
 
-    public async Task<WhatsAppSendResult> SendRenewalReminderAsync(
-        WhatsAppReminderMessage m, CancellationToken ct = default)
+    public async Task<WhatsAppSendResult> SendTemplateAsync(
+        string phone, string templateName, IReadOnlyList<string> parameters, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(_opt.Token) || string.IsNullOrWhiteSpace(_opt.PhoneNumberId))
             return new WhatsAppSendResult(false, "WhatsApp is not configured (token or phone number id missing).");
 
-        var to = (string.IsNullOrWhiteSpace(_opt.TestRecipient) ? m.Phone : _opt.TestRecipient).TrimStart('+');
         var payload = new
         {
             messaging_product = "whatsapp",
-            to,
+            to = phone.TrimStart('+'), // the Cloud API wants digits only
             type = "template",
             template = new
             {
-                name = _opt.TemplateName,
+                name = templateName,
                 language = new { code = _opt.LanguageCode },
                 components = new[]
                 {
-                    new
-                    {
-                        type = "body",
-                        parameters = new[]
-                        {
-                            Text(m.CustomerName),
-                            Text(string.IsNullOrWhiteSpace(m.ProjectName) ? "-" : m.ProjectName),
-                            Text(m.EndDate.ToString("dd MMM yyyy", CultureInfo.InvariantCulture)),
-                        },
-                    },
+                    new { type = "body", parameters = parameters.Select(p => new { type = "text", text = p }).ToArray() },
                 },
             },
         };
@@ -82,8 +72,6 @@ public class WhatsAppSender(HttpClient http, IOptions<WhatsAppOptions> options) 
         }
     }
 
-    private static object Text(string value) => new { type = "text", text = value };
-
     private string ExtractMessage(string body)
     {
         string message;
@@ -94,8 +82,43 @@ public class WhatsAppSender(HttpClient http, IOptions<WhatsAppOptions> options) 
                 && err.TryGetProperty("message", out var msg) ? msg.GetString() ?? "error" : "error";
         }
         catch (JsonException) { message = "unexpected response"; }
-        // Defence in depth: never let a secret or number reach the database or logs.
+        // Defence in depth: never let a secret reach the database or logs.
         if (!string.IsNullOrEmpty(_opt.Token)) message = message.Replace(_opt.Token, "***");
         return message;
+    }
+}
+
+/// <summary>One call recorded by <see cref="FakeWhatsAppSender"/>.</summary>
+public record WhatsAppCall(string Phone, string TemplateName, IReadOnlyList<string> Parameters);
+
+/// <summary>
+/// For tests and Development: records each call in memory and never contacts WhatsApp.
+/// Set <see cref="FailWith"/> to make every call fail with that error.
+/// </summary>
+public class FakeWhatsAppSender : IWhatsAppSender
+{
+    private readonly Lock _gate = new();
+    private readonly List<WhatsAppCall> _calls = [];
+
+    public string? FailWith { get; set; }
+
+    public IReadOnlyList<WhatsAppCall> Calls
+    {
+        get { lock (_gate) return [.. _calls]; }
+    }
+
+    public void Clear()
+    {
+        lock (_gate) _calls.Clear();
+        FailWith = null;
+    }
+
+    public Task<WhatsAppSendResult> SendTemplateAsync(
+        string phone, string templateName, IReadOnlyList<string> parameters, CancellationToken ct = default)
+    {
+        lock (_gate) _calls.Add(new WhatsAppCall(phone, templateName, [.. parameters]));
+        return Task.FromResult(FailWith is { } error
+            ? new WhatsAppSendResult(false, error)
+            : new WhatsAppSendResult(true));
     }
 }

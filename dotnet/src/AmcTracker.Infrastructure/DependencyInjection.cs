@@ -13,7 +13,12 @@ public static class DependencyInjection
 {
     public const string ConnectionName = "Default";
 
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration config)
+    /// <param name="isDevelopment">
+    /// Development: reminders run in test mode (only Reminders:TestPhone is ever messaged) and WhatsApp uses
+    /// the in-memory fake unless WhatsApp:UseFake is set to false.
+    /// </param>
+    public static IServiceCollection AddInfrastructure(
+        this IServiceCollection services, IConfiguration config, bool isDevelopment = false)
     {
         var connection = config.GetConnectionString(ConnectionName);
         if (string.IsNullOrWhiteSpace(connection))
@@ -25,6 +30,9 @@ public static class DependencyInjection
         services.AddScoped<ICustomerRepository, CustomerRepository>();
         services.AddScoped<IPlanRepository, PlanRepository>();
         services.AddScoped<IReminderRepository, ReminderRepository>();
+        services.AddScoped<IPaymentRepository, PaymentRepository>();
+        services.AddScoped<IDashboardRepository, DashboardRepository>();
+        services.AddScoped<IReportRepository, ReportRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
 
         services.Configure<JwtOptions>(config.GetSection(JwtOptions.Section));
@@ -32,19 +40,29 @@ public static class DependencyInjection
         services.Configure<ClockOptions>(config.GetSection(ClockOptions.Section));
         services.Configure<WhatsAppOptions>(config.GetSection(WhatsAppOptions.Section));
         services.Configure<ReminderJobOptions>(config.GetSection(ReminderJobOptions.Section));
+        services.Configure<ReminderOptions>(config.GetSection(ReminderOptions.Section));
+        if (isDevelopment) services.PostConfigure<ReminderOptions>(o => o.TestMode = true);
 
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<Application.Abstractions.IPasswordHasher, IdentityPasswordHasher>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
-        services.AddSingleton<IExcelExporter, ClosedXmlExcelExporter>();
-        services.AddSingleton<IPdfExporter, QuestPdfExporter>();
+        services.AddSingleton<IReportFileBuilder, ExcelReportBuilder>();
+        services.AddSingleton<IReportFileBuilder, PdfReportBuilder>();
 
-        services.AddHttpClient<IWhatsAppSender, WhatsAppSender>((sp, http) =>
+        var whatsApp = config.GetSection(WhatsAppOptions.Section).Get<WhatsAppOptions>() ?? new WhatsAppOptions();
+        if (whatsApp.UseFake ?? isDevelopment)
         {
-            var opt = config.GetSection(WhatsAppOptions.Section).Get<WhatsAppOptions>() ?? new WhatsAppOptions();
-            http.BaseAddress = new Uri(opt.BaseUrl);
-            http.Timeout = TimeSpan.FromSeconds(30);
-        });
+            services.AddSingleton<FakeWhatsAppSender>();
+            services.AddSingleton<IWhatsAppSender>(sp => sp.GetRequiredService<FakeWhatsAppSender>());
+        }
+        else
+        {
+            services.AddHttpClient<IWhatsAppSender, WhatsAppCloudSender>(http =>
+            {
+                http.BaseAddress = new Uri(whatsApp.BaseUrl);
+                http.Timeout = TimeSpan.FromSeconds(30);
+            });
+        }
 
         services.AddHostedService<ReminderBackgroundService>();
         return services;

@@ -145,7 +145,8 @@ public class CustomerServiceTests
         Assert.NotNull(plan);
         Assert.Equal(PlanType.Monthly, plan!.PlanType);
         Assert.Equal(new DateOnly(2026, 10, 12), plan.StartDate);
-        Assert.Equal(new DateOnly(2027, 10, 12), plan.EndDate);
+        Assert.Equal(new DateOnly(2026, 11, 12), plan.EndDate); // Monthly: a 1-month plan
+        Assert.Equal(new DateOnly(2026, 11, 5), plan.ReminderDate);
         Assert.Equal(5000m, plan.Amount);
     }
 
@@ -167,16 +168,36 @@ public class CustomerServiceTests
     public async Task Switching_the_type_on_edit_changes_the_open_plan()
     {
         var row = Row();
-        var plan = Plan.Create(7, PlanType.AMC, 100m, new DateOnly(2026, 1, 1), new DateOnly(2026, 10, 16));
+        var plan = Plan.Create(7, PlanType.AMC, 100m, new DateOnly(2026, 1, 1));
         _repo.GetByIdAsync(7, false, Arg.Any<CancellationToken>()).Returns(row);
-        _plans.GetLatestOpenForCustomerAsync(7, Arg.Any<CancellationToken>()).Returns(plan);
+        _plans.GetCurrentForCustomerAsync(7, Arg.Any<PlanType?>(), Arg.Any<CancellationToken>()).Returns(plan);
 
         await _service.UpdateAsync(7, new UpdateCustomerRequest(
             "Asha", "+919876543210", null, new DateOnly(2026, 1, 1), null, null, null, PlanType.Monthly));
 
         Assert.Equal(PlanType.Monthly, row.PlanType);
         Assert.Equal(PlanType.Monthly, plan.PlanType);
+        Assert.Equal(new DateOnly(2026, 2, 1), plan.EndDate); // recalculated as a 1-month plan
+        Assert.Equal(new DateOnly(2026, 1, 25), plan.ReminderDate);
         _plans.DidNotReceiveWithAnyArgs().Add(default!);
+    }
+
+    [Fact]
+    public async Task Switching_to_a_type_that_already_has_an_open_plan_is_409_overlapping_plan()
+    {
+        var row = Row();
+        var plan = Plan.Create(7, PlanType.AMC, 100m, new DateOnly(2026, 1, 1));
+        plan.PlanId = 1;
+        _repo.GetByIdAsync(7, false, Arg.Any<CancellationToken>()).Returns(row);
+        _plans.GetCurrentForCustomerAsync(7, Arg.Any<PlanType?>(), Arg.Any<CancellationToken>()).Returns(plan);
+        _plans.HasOpenPlanAsync(7, PlanType.Monthly, 1, Arg.Any<CancellationToken>()).Returns(true);
+
+        var ex = await Assert.ThrowsAsync<AppException>(() => _service.UpdateAsync(7, new UpdateCustomerRequest(
+            "Asha", "+919876543210", null, new DateOnly(2026, 1, 1), null, null, null, PlanType.Monthly)));
+
+        Assert.Equal((409, "overlapping_plan"), (ex.StatusCode, ex.Code));
+        Assert.Equal(PlanType.AMC, plan.PlanType);
+        await _uow.DidNotReceiveWithAnyArgs().SaveChangesAsync(default);
     }
 
     [Fact]
@@ -185,8 +206,8 @@ public class CustomerServiceTests
         var row = Row();
         row.PlanType = PlanType.Monthly;
         _repo.GetByIdAsync(7, false, Arg.Any<CancellationToken>()).Returns(row);
-        _plans.GetLatestOpenForCustomerAsync(7, Arg.Any<CancellationToken>())
-            .Returns(Plan.Create(7, PlanType.Monthly, 0m, new DateOnly(2026, 1, 1), new DateOnly(2026, 10, 16)));
+        _plans.GetCurrentForCustomerAsync(7, Arg.Any<PlanType?>(), Arg.Any<CancellationToken>())
+            .Returns(Plan.Create(7, PlanType.Monthly, 0m, new DateOnly(2026, 1, 1)));
 
         await _service.UpdateAsync(7, new UpdateCustomerRequest(
             "Asha", "+919876543210", null, new DateOnly(2026, 1, 1), null, null, null));
@@ -199,7 +220,7 @@ public class CustomerServiceTests
     {
         var row = Row();
         _repo.GetByIdAsync(7, false, Arg.Any<CancellationToken>()).Returns(row);
-        _plans.GetLatestOpenForCustomerAsync(7, Arg.Any<CancellationToken>()).Returns((Plan?)null);
+        _plans.GetCurrentForCustomerAsync(7, Arg.Any<PlanType?>(), Arg.Any<CancellationToken>()).Returns((Plan?)null);
 
         await _service.UpdateAsync(7, new UpdateCustomerRequest(
             "Asha", "+919876543210", null, new DateOnly(2026, 1, 1), null, null, null, PlanType.Monthly));
@@ -218,24 +239,24 @@ public class CustomerServiceTests
 
         var monthly = await _service.CreateAsync(new CreateCustomerRequest(
             "Mohan", "+919876543211", null, new DateOnly(2026, 10, 12), null, null, null, PlanType.Monthly));
-        Assert.Equal(new DateOnly(2027, 10, 12), monthly.PlanEndDate);
-        Assert.Equal(new DateOnly(2026, 11, 5), monthly.ReminderDate); // 7 days before 12 Nov
+        Assert.Equal(new DateOnly(2026, 11, 12), monthly.PlanEndDate);
+        Assert.Equal(new DateOnly(2026, 11, 5), monthly.ReminderDate); // 7 days before the end
     }
 
     [Fact]
     public async Task Changing_the_installation_date_moves_the_plan_and_the_dates()
     {
         var row = Row();
-        var plan = Plan.Create(7, PlanType.AMC, 0m, new DateOnly(2026, 1, 1), new DateOnly(2026, 10, 16));
+        var plan = Plan.Create(7, PlanType.AMC, 0m, new DateOnly(2026, 1, 1));
         _repo.GetByIdAsync(7, false, Arg.Any<CancellationToken>()).Returns(row);
-        _plans.GetLatestOpenForCustomerAsync(7, Arg.Any<CancellationToken>()).Returns(plan);
+        _plans.GetCurrentForCustomerAsync(7, Arg.Any<PlanType?>(), Arg.Any<CancellationToken>()).Returns(plan);
 
         var dto = await _service.UpdateAsync(7, new UpdateCustomerRequest(
             "Asha", "+919876543210", null, new DateOnly(2026, 10, 12), null, null, null));
 
         Assert.Equal(new DateOnly(2026, 10, 12), plan.StartDate);
         Assert.Equal(new DateOnly(2027, 10, 12), plan.EndDate);
-        Assert.Equal(new DateOnly(2027, 9, 12), plan.NotificationDate);
+        Assert.Equal(new DateOnly(2027, 9, 12), plan.ReminderDate);
         Assert.Equal(new DateOnly(2027, 10, 12), dto.PlanEndDate);
         Assert.Equal(new DateOnly(2027, 9, 12), dto.ReminderDate);
     }

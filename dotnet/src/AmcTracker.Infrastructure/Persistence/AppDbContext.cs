@@ -1,6 +1,8 @@
 using AmcTracker.Application.Abstractions;
+using AmcTracker.Application.Common;
 using AmcTracker.Domain.Entities;
 using AmcTracker.Domain.Enums;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -28,7 +30,22 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         b.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 
-    Task<int> IUnitOfWork.SaveChangesAsync(CancellationToken ct) => SaveChangesAsync(ct);
+    async Task<int> IUnitOfWork.SaveChangesAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            // The SQL Server message names the index, so services can tell which rule was hit.
+            throw new DuplicateKeyException(ex.InnerException!.Message, ex);
+        }
+    }
+
+    /// <summary>SQL Server 2601 / 2627: a unique index or unique constraint was violated.</summary>
+    internal static bool IsUniqueViolation(DbUpdateException ex) =>
+        ex.InnerException is SqlException { Number: 2601 or 2627 };
 }
 
 public class UtcDateTimeConverter() : ValueConverter<DateTime, DateTime>(
@@ -116,17 +133,26 @@ internal class PlanConfiguration : IEntityTypeConfiguration<Plan>
         e.Property(x => x.Amount).HasColumnType("decimal(12,2)");
         e.Property(x => x.StartDate).HasColumnType("date");
         e.Property(x => x.EndDate).HasColumnType("date");
-        e.Property(x => x.NotificationDate).HasColumnType("date");
-        e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+        e.Property(x => x.ReminderDate).HasColumnType("date");
         e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        // No Status column: status is calculated on read (open decision 3, settled 2026-10-21).
         e.HasIndex(x => x.CustomerId);
-        e.HasIndex(x => x.NotificationDate);
+        e.HasIndex(x => x.ReminderDate);
         e.HasIndex(x => x.EndDate);
         // Customers are soft-deleted only, so no cascades anywhere.
         e.HasOne(x => x.Customer).WithMany(c => c.Plans).HasForeignKey(x => x.CustomerId)
             .OnDelete(DeleteBehavior.Restrict);
-        e.HasOne(x => x.PreviousPlan).WithMany().HasForeignKey(x => x.PreviousPlanId)
+        // One-to-one: a plan has at most one renewal. EF makes IX_Plans_PreviousPlanId unique
+        // (filtered on NOT NULL), so two renewals of the same plan can never both be saved.
+        e.HasOne(x => x.PreviousPlan).WithOne(x => x.Renewal).HasForeignKey<Plan>(x => x.PreviousPlanId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        e.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_Plans_PlanType", "[PlanType] IN ('AMC', 'Monthly')");
+            t.HasCheckConstraint("CK_Plans_Amount_NonNegative", "[Amount] >= 0");
+            t.HasCheckConstraint("CK_Plans_Dates", "[StartDate] < [ReminderDate] AND [ReminderDate] < [EndDate]");
+        });
     }
 }
 
@@ -139,9 +165,15 @@ internal class ReminderConfiguration : IEntityTypeConfiguration<Reminder>
         e.Property(x => x.ScheduledDate).HasColumnType("date");
         e.Property(x => x.Channel).HasMaxLength(20).IsRequired().HasDefaultValue("WhatsApp");
         e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+        e.Property(x => x.Attempts).HasDefaultValue(0);
         e.Property(x => x.ErrorMessage).HasMaxLength(500);
         // Enforces "never send twice" at the database level.
         e.HasIndex(x => new { x.PlanId, x.ScheduledDate }).IsUnique().HasDatabaseName("UQ_Reminder_PlanDate");
+        e.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_Reminders_Status", "[Status] IN ('Pending', 'Sent', 'Failed')");
+            t.HasCheckConstraint("CK_Reminders_Attempts", "[Attempts] >= 0");
+        });
         e.HasOne(x => x.Plan).WithMany(p => p.Reminders).HasForeignKey(x => x.PlanId)
             .OnDelete(DeleteBehavior.Restrict);
     }
@@ -155,8 +187,15 @@ internal class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         e.HasKey(x => x.PaymentId);
         e.Property(x => x.PaidOn).HasColumnType("date");
         e.Property(x => x.Amount).HasColumnType("decimal(12,2)");
-        e.Property(x => x.Mode).HasMaxLength(20);
+        e.Property(x => x.Mode).HasConversion<string>().HasMaxLength(20).IsRequired();
+        e.Property(x => x.Note).HasMaxLength(200);
+        e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
         e.HasIndex(x => x.PlanId);
         e.HasOne(x => x.Plan).WithMany().HasForeignKey(x => x.PlanId).OnDelete(DeleteBehavior.Restrict);
+        e.ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_Payments_Amount_Positive", "[Amount] > 0");
+            t.HasCheckConstraint("CK_Payments_Mode", "[Mode] IN ('Cash', 'UPI', 'Bank')");
+        });
     }
 }

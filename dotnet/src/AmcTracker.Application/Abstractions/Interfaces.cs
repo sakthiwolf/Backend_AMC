@@ -6,6 +6,7 @@ namespace AmcTracker.Application.Abstractions;
 
 public interface IUnitOfWork
 {
+    /// <summary>Saves pending changes. A unique-key violation surfaces as <see cref="Common.DuplicateKeyException"/>.</summary>
     Task<int> SaveChangesAsync(CancellationToken ct = default);
 }
 
@@ -32,34 +33,96 @@ public record PlanFilter(
     DateOnly? From = null,
     DateOnly? To = null,
     int? CustomerId = null,
-    bool IncludeInactiveCustomers = false);
+    bool IncludeInactiveCustomers = false,
+    /// <summary>Not renewed, ending from today through today + this many days (the dashboard's "ending in 30 days" list).</summary>
+    int? EndingWithinDays = null);
 
+/// <summary>Every plan read loads the plan's renewal, so <see cref="Plan.IsRenewed"/> and the status are right.</summary>
 public interface IPlanRepository
 {
-    /// <summary>Loads the plan with its customer.</summary>
+    /// <summary>The plan with its customer and renewal (tracked), or null.</summary>
     Task<Plan?> GetByIdAsync(int id, CancellationToken ct = default);
-    /// <summary>The customer's newest plan that has not been renewed (tracked), or null.</summary>
-    Task<Plan?> GetLatestOpenForCustomerAsync(int customerId, CancellationToken ct = default);
-    /// <summary>Plans with customers, filtered by effective status as of <paramref name="today"/>.</summary>
-    Task<List<Plan>> ListAsync(PlanFilter filter, DateOnly today, CancellationToken ct = default);
+    /// <summary>All of a customer's plans, newest first (by start date, then id).</summary>
+    Task<List<Plan>> ListForCustomerAsync(int customerId, CancellationToken ct = default);
     /// <summary>
-    /// Candidate plans for today's reminder run: non-renewed plans of active, non-opted-out customers.
-    /// Yearly plans: NotificationDate has arrived, not ended, no Sent reminder yet. Monthly plans: inside
-    /// their year (the service then works out which month's reminder is open).
+    /// The customer's newest non-renewed plan (tracked), preferring <paramref name="preferredType"/> when the
+    /// customer has an open plan of that type. Null when every plan has been renewed or there are none.
     /// </summary>
-    Task<List<Plan>> ListPendingRemindersAsync(DateOnly today, CancellationToken ct = default);
-    /// <summary>Refreshes each customer's PlanEndDate and ReminderDate from their newest open plan.</summary>
-    Task SyncCustomerDatesAsync(DateOnly today, CancellationToken ct = default);
-    /// <summary>Rewrites the stored Status of non-renewed plans from the dates.</summary>
-    Task SyncStatusesAsync(DateOnly today, CancellationToken ct = default);
+    Task<Plan?> GetCurrentForCustomerAsync(int customerId, PlanType? preferredType, CancellationToken ct = default);
+    /// <summary>True when the customer has a non-renewed plan of <paramref name="type"/> other than <paramref name="exceptPlanId"/>.</summary>
+    Task<bool> HasOpenPlanAsync(int customerId, PlanType type, int? exceptPlanId, CancellationToken ct = default);
+    /// <summary>Plans with customers, filtered by status as of <paramref name="today"/>.</summary>
+    Task<List<Plan>> ListAsync(PlanFilter filter, DateOnly today, CancellationToken ct = default);
+    /// <summary>One page of <see cref="ListAsync"/>, ordered by end date.</summary>
+    Task<(List<Plan> Items, int TotalCount)> PageAsync(
+        PlanFilter filter, DateOnly today, int page, int pageSize, CancellationToken ct = default);
+    /// <summary>
+    /// Plans whose reminder goes out on <paramref name="today"/>: ReminderDate is today, not renewed, and the
+    /// customer is active and has not opted out. Loaded with their customers.
+    /// </summary>
+    Task<List<Plan>> ListRemindersDueAsync(DateOnly today, CancellationToken ct = default);
     void Add(Plan plan);
 }
 
 public interface IReminderRepository
 {
+    /// <summary>A plan's reminders, newest first, with the plan and its renewal.</summary>
     Task<List<Reminder>> ListForPlanAsync(int planId, CancellationToken ct = default);
     Task<Reminder?> GetAsync(int planId, DateOnly scheduledDate, CancellationToken ct = default);
-    void Add(Reminder reminder);
+    /// <summary>The reminder with its plan, the plan's renewal and the customer (tracked), or null.</summary>
+    Task<Reminder?> GetByIdAsync(int reminderId, CancellationToken ct = default);
+    /// <summary>
+    /// Failed reminders the daily run tries again: scheduled on or before <paramref name="today"/>, fewer than
+    /// <see cref="Reminder.MaxAttempts"/> attempts, plan not renewed and not past its end date, customer active
+    /// and not opted out. Loaded with plan, renewal and customer (tracked).
+    /// </summary>
+    Task<List<Reminder>> ListRetryableAsync(DateOnly today, CancellationToken ct = default);
+    /// <summary>
+    /// Inserts and saves the reminder. Returns false, and leaves nothing pending, when the unique
+    /// (PlanId, ScheduledDate) key already holds a row: the database-level "never send twice".
+    /// </summary>
+    Task<bool> TryAddAsync(Reminder reminder, CancellationToken ct = default);
+}
+
+/// <summary>Plan counts by status, for plans of active customers.</summary>
+public record StatusCounts(int Active, int Due, int Expired, int Renewed);
+
+/// <summary>One row of the "needs action" list, read together with its customer and reminder in one query.</summary>
+public record UpcomingRow(
+    int PlanId,
+    int CustomerId,
+    string CustomerName,
+    string Phone,
+    string? ProjectName,
+    PlanType PlanType,
+    DateOnly EndDate,
+    DateOnly ReminderDate,
+    ReminderStatus? ReminderStatus);
+
+/// <summary>Plans ending in one calendar month, and how many of them have a renewal.</summary>
+public record MonthCount(int Year, int Month, int Ending, int Renewed);
+
+/// <summary>
+/// Read-only queries for the dashboard. Each one is a single grouped or filtered query over plans of active
+/// customers, using the status rules in <see cref="Domain.Services.PlanSpec"/>. Nothing is stored.
+/// </summary>
+public interface IDashboardRepository
+{
+    Task<StatusCounts> CountByStatusAsync(DateOnly today, CancellationToken ct = default);
+    Task<int> CountEndingWithinAsync(DateOnly today, int days, CancellationToken ct = default);
+    Task<int> CountActiveCustomersAsync(CancellationToken ct = default);
+    /// <summary>Due plans and plans reminding within <paramref name="days"/> days, soonest end date first.</summary>
+    Task<List<UpcomingRow>> ListNeedingActionAsync(DateOnly today, int days, CancellationToken ct = default);
+    /// <summary>Plans ending from <paramref name="first"/> through <paramref name="last"/>, counted per calendar month.</summary>
+    Task<List<MonthCount>> CountEndingByMonthAsync(DateOnly first, DateOnly last, CancellationToken ct = default);
+}
+
+/// <summary>Renewal payments. Add and read only: payments are never updated or deleted through the API.</summary>
+public interface IPaymentRepository
+{
+    void Add(Payment payment);
+    /// <summary>The payments made for one plan, newest first.</summary>
+    Task<List<Payment>> ListForPlanAsync(int planId, CancellationToken ct = default);
 }
 
 public interface IUserRepository
@@ -71,25 +134,16 @@ public interface IUserRepository
     void AddDevice(UserDevice device);
 }
 
-public record WhatsAppReminderMessage(
-    string Phone, string CustomerName, string? ProjectName, DateOnly EndDate);
-
 public record WhatsAppSendResult(bool Success, string? Error = null);
 
+/// <summary>Sends an approved WhatsApp template. Implementations never log phone numbers or message bodies.</summary>
 public interface IWhatsAppSender
 {
-    Task<WhatsAppSendResult> SendRenewalReminderAsync(
-        WhatsAppReminderMessage message, CancellationToken ct = default);
-}
-
-public interface IExcelExporter
-{
-    byte[] Export(IReadOnlyList<PlanDto> rows, string title);
-}
-
-public interface IPdfExporter
-{
-    byte[] Export(IReadOnlyList<PlanDto> rows, string title);
+    /// <param name="phone">E.164 recipient, e.g. +919876543210.</param>
+    /// <param name="templateName">The approved template (configuration, not code).</param>
+    /// <param name="parameters">Body parameters, in template order.</param>
+    Task<WhatsAppSendResult> SendTemplateAsync(
+        string phone, string templateName, IReadOnlyList<string> parameters, CancellationToken ct = default);
 }
 
 public interface IPasswordHasher

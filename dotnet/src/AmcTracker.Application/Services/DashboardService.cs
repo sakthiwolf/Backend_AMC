@@ -1,60 +1,70 @@
 using AmcTracker.Application.Abstractions;
+using AmcTracker.Application.Common;
 using AmcTracker.Application.Dtos;
-using AmcTracker.Domain.Enums;
+using AmcTracker.Domain.Services;
 
 namespace AmcTracker.Application.Services;
 
-public class DashboardService(IPlanRepository plans, IClock clock)
+/// <summary>
+/// The dashboard: counts and dates only, never revenue, totals or any amount. "Today" is the Asia/Kolkata date
+/// from <see cref="IClock"/>. Status is calculated on read by the rules in <see cref="PlanSpec"/> /
+/// <see cref="PlanStatusCalculator"/>; plans of inactive customers are not counted; renewed plans are left out
+/// of every count except the monthly chart, where they are shown apart. Nothing here is stored.
+/// </summary>
+public class DashboardService(IDashboardRepository dashboard, IClock clock)
 {
+    public const int EndingSoonDays = 30;
+    public const int DefaultDays = 7, MinDays = 1, MaxDays = 90;
+    public const int DefaultMonths = 12, MinMonths = 1, MaxMonths = 24;
+
     public async Task<DashboardSummaryDto> GetSummaryAsync(CancellationToken ct = default)
     {
         var today = clock.Today;
-        var all = await plans.ListAsync(new PlanFilter(), today, ct);
-        var open = all.Where(p => !p.IsRenewed).ToList();
-
-        var active = open.Where(p => p.EffectiveStatus(today) == PlanStatus.Active).ToList();
-        var due = open.Count(p => p.EffectiveStatus(today) == PlanStatus.DueForRenewal);
-        var expired = open.Count(p => p.EffectiveStatus(today) == PlanStatus.Expired);
-        var dueIn30 = open.Count(p => p.NotificationDate >= today && p.NotificationDate <= today.AddDays(30));
-
-        // TODO(open decision 1, CLAUDE.md section 9): "monthly revenue" is undefined in CLAUDE.md and
-        // depends on whether a Monthly plan's Amount is the rate or the contract total. For now this
-        // sums Amount of non-renewed, non-expired Monthly plans exactly as stored (no x12, no /12).
-        var revenue = open
-            .Where(p => p.PlanType == PlanType.Monthly && p.EffectiveStatus(today) != PlanStatus.Expired)
-            .Sum(p => p.Amount);
-
-        return new DashboardSummaryDto(active.Count, due, dueIn30, expired, revenue);
+        var byStatus = await dashboard.CountByStatusAsync(today, ct);
+        var endingSoon = await dashboard.CountEndingWithinAsync(today, EndingSoonDays, ct);
+        var customers = await dashboard.CountActiveCustomersAsync(ct);
+        return new DashboardSummaryDto(byStatus.Active, byStatus.Due, byStatus.Expired, endingSoon, customers, today);
     }
 
-    /// <summary>Plans whose reminder date falls within the next <paramref name="days"/> days.</summary>
-    public async Task<IReadOnlyList<PlanDto>> GetUpcomingAsync(int days, CancellationToken ct = default)
+    /// <summary>Plans that need action now, soonest end date first. <paramref name="days"/> must be 1 to 90.</summary>
+    public async Task<UpcomingResponse> GetUpcomingAsync(int days = DefaultDays, CancellationToken ct = default)
     {
-        days = Math.Clamp(days, 0, 366);
+        if (days is < MinDays or > MaxDays) throw OutOfRange("days", MinDays, MaxDays);
         var today = clock.Today;
-        var list = await plans.ListAsync(
-            new PlanFilter(Basis: DateBasis.NotificationDate, From: today, To: today.AddDays(days)), today, ct);
-        return list.Where(p => !p.IsRenewed)
-            .OrderBy(p => p.NotificationDate).ThenBy(p => p.PlanId)
-            .Select(p => p.ToDto(today)).ToList();
+        var rows = await dashboard.ListNeedingActionAsync(today, days, ct);
+        var items = rows.Select(r => new UpcomingPlanDto(
+            r.PlanId, r.CustomerId, r.CustomerName, r.Phone, r.ProjectName, r.PlanType, r.EndDate, r.ReminderDate,
+            // The same rules as everywhere else; rows are never renewed plans.
+            PlanStatusCalculator.Resolve(today, r.ReminderDate, r.EndDate, isRenewed: false),
+            r.ReminderStatus)).ToList();
+        return new UpcomingResponse(items);
     }
 
-    /// <summary>Plans ending in each of the next 12 calendar months (this month included), renewed plans excluded.</summary>
-    public async Task<IReadOnlyList<MonthlyRenewalDto>> GetMonthlyRenewalsAsync(CancellationToken ct = default)
+    /// <summary>
+    /// One entry per calendar month starting with the current month (in Asia/Kolkata).
+    /// <paramref name="months"/> must be 1 to 24. <c>EndingCount = RenewedCount + PendingCount</c>.
+    /// </summary>
+    public async Task<MonthlyRenewalsResponse> GetMonthlyRenewalsAsync(int months = DefaultMonths, CancellationToken ct = default)
     {
+        if (months is < MinMonths or > MaxMonths) throw OutOfRange("months", MinMonths, MaxMonths);
         var today = clock.Today;
         var first = new DateOnly(today.Year, today.Month, 1);
-        var last = first.AddMonths(12).AddDays(-1);
-        var list = await plans.ListAsync(new PlanFilter(From: first, To: last), today, ct);
-        var counts = list.Where(p => !p.IsRenewed)
-            .GroupBy(p => (p.EndDate.Year, p.EndDate.Month))
-            .ToDictionary(g => g.Key, g => g.Count());
+        var last = first.AddMonths(months).AddDays(-1);
+        var counts = (await dashboard.CountEndingByMonthAsync(first, last, ct))
+            .ToDictionary(c => (c.Year, c.Month));
 
-        return Enumerable.Range(0, 12).Select(i =>
+        var points = new List<MonthlyRenewalPointDto>(months);
+        for (var i = 0; i < months; i++)
         {
-            var m = first.AddMonths(i);
-            counts.TryGetValue((m.Year, m.Month), out var n);
-            return new MonthlyRenewalDto(m.Year, m.Month, m.ToString("MMM yyyy"), n);
-        }).ToList();
+            var month = first.AddMonths(i);
+            counts.TryGetValue((month.Year, month.Month), out var c);
+            var ending = c?.Ending ?? 0;
+            var renewed = c?.Renewed ?? 0;
+            points.Add(new MonthlyRenewalPointDto($"{month.Year:0000}-{month.Month:00}", ending, renewed, ending - renewed));
+        }
+        return new MonthlyRenewalsResponse(points);
     }
+
+    private static AppException OutOfRange(string name, int min, int max) =>
+        new(422, "validation_error", $"Invalid or missing fields: {name} (a whole number from {min} to {max}).");
 }

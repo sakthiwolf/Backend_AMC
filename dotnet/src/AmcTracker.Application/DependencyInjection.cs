@@ -12,9 +12,11 @@ public static class DependencyInjection
         services.AddScoped<AuthService>();
         services.AddScoped<ICustomerService, CustomerService>();
         services.AddScoped<PlanService>();
+        services.AddScoped<RenewalService>();
         services.AddScoped<ReminderService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
+        services.AddScoped<ReportExportService>();
         return services;
     }
 }
