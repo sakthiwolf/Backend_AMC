@@ -120,6 +120,11 @@ builder.Services.AddSwaggerGen(o =>
 
 var app = builder.Build();
 
+// Reminders:TestMode was renamed Reminders:TestPhoneOnly; the old key is read for one release.
+if (app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AmcTracker.Application.Options.ReminderOptions>>()
+        .Value.UsedDeprecatedTestMode)
+    app.Logger.LogWarning("Reminders:TestMode is deprecated and will be removed; use Reminders:TestPhoneOnly.");
+
 // CLI mode: `create-user <username> [full name]` instead of starting the server.
 if (args.Length > 0 && args[0] == "create-user")
 {

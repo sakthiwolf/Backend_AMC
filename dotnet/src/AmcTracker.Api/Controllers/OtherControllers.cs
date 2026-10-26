@@ -86,6 +86,15 @@ public class RemindersController(ReminderService reminders) : ControllerBase
     [Authorize(Policy = AdminRequirement.Policy)]
     public Task<ReminderRunResult> Run(CancellationToken ct) => reminders.RunDailyAsync(ct);
 
+    /// <summary>
+    /// Sends the template for <paramref name="planType"/> (default AMC) once to Reminders:TestPhone with sample
+    /// values (admin only). Stores nothing. 409 test_phone_not_set when no test phone is configured.
+    /// </summary>
+    [HttpPost("test-send")]
+    [Authorize(Policy = AdminRequirement.Policy)]
+    public Task<TestSendResultDto> TestSend([FromQuery] PlanType? planType, CancellationToken ct) =>
+        reminders.TestSendAsync(planType ?? PlanType.AMC, ct);
+
     /// <summary>"Try again" on one failed reminder. 409 when it cannot be retried (sent, out of attempts, plan over).</summary>
     [HttpPost("{id:int}/retry")]
     public Task<ReminderDto> Retry(int id, CancellationToken ct) => reminders.RetryAsync(id, ct);

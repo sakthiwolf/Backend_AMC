@@ -11,7 +11,8 @@ public class ReminderJobOptions
 {
     public const string Section = "Reminders";
 
-    public bool Enabled { get; set; } = true;
+    /// <summary>Off by default: reminders go out only once this is set to true.</summary>
+    public bool Enabled { get; set; }
     /// <summary>Local time of day (in the Clock time zone) for the daily run, HH:mm.</summary>
     public string RunAt { get; set; } = "09:00";
 }

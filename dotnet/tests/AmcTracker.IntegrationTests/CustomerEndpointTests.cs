@@ -34,6 +34,53 @@ public class CustomerEndpointTests : IAsyncLifetime
         page.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("customerName").GetString()!).ToArray();
 
     [Fact]
+    public async Task Total_project_value_is_stored_as_entered_apart_from_the_plan_amount()
+    {
+        var c = await _api.SignedInAsync();
+        var res = await c.PostAsJsonAsync("/api/customers", new
+        {
+            customerName = "Whole Value Co", phone = "+910000000021", installationDate = "2026-10-12",
+            projectValue = 12000m, totalProjectValue = 250000.5m,
+        });
+        Assert.Equal(HttpStatusCode.Created, res.StatusCode);
+        var created = await res.Json();
+        var id = created.GetProperty("customerId").GetInt32();
+        Assert.Equal(250000.5m, created.GetProperty("totalProjectValue").GetDecimal());
+        Assert.Equal(12000m, created.GetProperty("projectValue").GetDecimal()); // plan amount untouched
+
+        var plan = (await (await c.GetAsync($"/api/customers/{id}/plans")).Json()).EnumerateArray().Single();
+        Assert.Equal(12000m, plan.GetProperty("amount").GetDecimal()); // the plan never uses the total
+
+        var put = await c.PutAsJsonAsync($"/api/customers/{id}", new
+        {
+            customerName = "Whole Value Co", phone = "+910000000021", installationDate = "2026-10-12",
+            projectValue = 12000m, totalProjectValue = 300000m,
+        });
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        Assert.Equal(300000m, (await (await c.GetAsync($"/api/customers/{id}")).Json()).GetProperty("totalProjectValue").GetDecimal());
+
+        // Left out: stored as null, shown as null.
+        var none = await Create(c, Body("No Total", "+910000000022"));
+        Assert.Equal(JsonValueKind.Null, (await (await c.GetAsync($"/api/customers/{none}")).Json()).GetProperty("totalProjectValue").ValueKind);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(10_000_000_000)]
+    [InlineData(1.234)]
+    public async Task Total_project_value_is_validated(double value)
+    {
+        var c = await _api.SignedInAsync();
+        var res = await c.PostAsJsonAsync("/api/customers", new
+        {
+            customerName = "Bad Total", phone = "+910000000023", installationDate = "2026-10-12", totalProjectValue = (decimal)value,
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, res.StatusCode);
+        var details = (await res.Json()).GetProperty("error").GetProperty("details").EnumerateArray();
+        Assert.Contains(details, d => d.GetProperty("field").GetString()!.Equals("totalProjectValue", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task Every_customer_route_needs_a_token()
     {
         var anon = _api.Anonymous();

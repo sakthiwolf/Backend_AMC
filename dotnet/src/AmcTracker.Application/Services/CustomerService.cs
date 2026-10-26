@@ -104,6 +104,7 @@ public class CustomerService(
         c.InstallationDate = r.InstallationDate!.Value;
         c.ProjectName = string.IsNullOrWhiteSpace(r.ProjectName) ? null : r.ProjectName.Trim();
         c.ProjectValue = r.ProjectValue;
+        c.TotalProjectValue = r.TotalProjectValue;
         c.WhatsAppOptOut = r.WhatsAppOptOut ?? false;
         if (r.PlanType is { } type) c.PlanType = type; // omitted: AMC for new customers, unchanged for edits
     }

@@ -16,15 +16,33 @@ public class ReminderOptions
 {
     public const string Section = "Reminders";
 
-    /// <summary>The approved WhatsApp template. Body parameters: customer name, project name, end date.</summary>
-    public string TemplateName { get; set; } = "amc_renewal_reminder";
+    /// <summary>Off by default: the daily run (and the manual run) does nothing until this is true.</summary>
+    public bool Enabled { get; set; }
     /// <summary>
-    /// Test mode: every message goes to <see cref="TestPhone"/>, never to a customer; with no TestPhone nothing
-    /// is sent at all. Always on in the Development environment.
+    /// On by default: every message goes to <see cref="TestPhone"/>, never to a customer; with no TestPhone
+    /// nothing is sent at all. Always on in the Development environment.
     /// </summary>
-    public bool TestMode { get; set; }
-    /// <summary>E.164 number that receives every message in test mode.</summary>
+    public bool TestPhoneOnly { get; set; } = true;
+    /// <summary>Deprecated name of <see cref="TestPhoneOnly"/>, read for one release when TestPhoneOnly is not set.</summary>
+    public bool? TestMode { get; set; }
+    /// <summary>Set at startup when the value came from the deprecated Reminders:TestMode key.</summary>
+    public bool UsedDeprecatedTestMode { get; set; }
+    /// <summary>E.164 number that receives every message while <see cref="TestPhoneOnly"/> is on.</summary>
     public string? TestPhone { get; set; }
+}
+
+/// <summary>The approved WhatsApp template for each plan type (section "WhatsApp:Templates").</summary>
+public class WhatsAppTemplateOptions
+{
+    public const string Section = "WhatsApp:Templates";
+
+    /// <summary>Body parameters: customer name, project name, EndDate ("12 Oct 2027").</summary>
+    public string AMC { get; set; } = "amc_yearly_reminder";
+    /// <summary>Same three body parameters as <see cref="AMC"/>.</summary>
+    public string Monthly { get; set; } = "amc_monthly_reminder";
+
+    public string For(AmcTracker.Domain.Enums.PlanType type) =>
+        type == AmcTracker.Domain.Enums.PlanType.Monthly ? Monthly : AMC;
 }
 
 public class AuthOptions

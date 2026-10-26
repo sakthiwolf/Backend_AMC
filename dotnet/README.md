@@ -47,14 +47,19 @@ Schema changes go through EF migrations only. Never edit tables by hand in produ
 | `Jwt__Issuer`, `Jwt__Audience` | no | default `amc-tracker` / `amc-tracker-app` |
 | `Auth__RefreshTokenDays` | no (90) | sliding refresh-token life |
 | `Auth__MaxFailedLogins`, `Auth__LockoutMinutes` | no (5, 15) | login lockout |
-| `WhatsApp__Token` | for reminders | Cloud API access token |
-| `WhatsApp__PhoneNumberId` | for reminders | sender phone-number id |
-| `WhatsApp__LanguageCode` | no (`en`) | template language |
-| `WhatsApp__UseFake` | no (true in Development, else false) | record sends in memory instead of calling WhatsApp |
-| `Reminders__TemplateName` | no (`amc_renewal_reminder`) | approved template (body: customer name, project name, end date) |
-| `Reminders__TestMode`, `Reminders__TestPhone` | no (test mode is always on in Development) | **testing**: every reminder goes to `TestPhone` (E.164), never to customers; with no `TestPhone` nothing is sent |
-| `Reminders__AdminUsernames__0`, `__1` ... | for `POST /api/reminders/run` | usernames allowed to trigger a run by hand (403 for everyone else) |
-| `Reminders__Enabled`, `Reminders__RunAt` | no (true, `09:00`) | daily job, local time in `Clock__TimeZone` |
+| `WhatsApp__Provider` | no (`Fake` in Development, `Wacto` elsewhere) | `Wacto` sends for real; `Fake` records sends in memory |
+| `WhatsApp__BaseUrl` | with Wacto | provider host, https only (from the Wacto console) |
+| `WhatsApp__ApiVersion` | with Wacto | path segment before the phone number id, e.g. `v21.0` |
+| `WhatsApp__PhoneNumberId` | with Wacto | sender phone-number id |
+| `WhatsApp__Token` | with Wacto | **secret**: access token; machine variable only, never in a file in the repo |
+| `WhatsApp__AuthHeaderName`, `WhatsApp__AuthScheme` | no (`Authorization`, `Bearer`) | how the token is sent; an empty scheme sends the token as-is |
+| `WhatsApp__Templates__AMC`, `WhatsApp__Templates__Monthly` | no (`amc_yearly_reminder`, `amc_monthly_reminder`) | approved template per plan type (body: customer name, project name, end date "12 Sep 2027") |
+| `WhatsApp__TemplateLanguage` | no (`en`) | template language |
+| `Reminders__Enabled`, `Reminders__RunAt` | no (**false**, `09:00`) | daily job, local time in `Clock__TimeZone`; nothing is sent until Enabled is true |
+| `Reminders__TestPhoneOnly`, `Reminders__TestPhone` | no (**true**; always true in Development) | every reminder goes to `TestPhone` (E.164), never to customers; with no `TestPhone` nothing is sent. `Reminders__TestMode` is the old name, read for one release |
+| `Reminders__AdminUsernames__0`, `__1` ... | for `POST /api/reminders/run` and `/test-send` | usernames allowed to trigger a run or a test send (403 for everyone else) |
+
+With `WhatsApp__Provider=Wacto` (the default outside Development) the API **refuses to start** if `BaseUrl`, `ApiVersion`, `PhoneNumberId` or `Token` is missing; the error names the missing keys. Set `WhatsApp__Provider=Fake` on a server that should not send at all.
 | `Clock__TimeZone` | no | default `Asia/Kolkata` |
 | `Database__MigrateOnStartup` | no (false) | apply EF migrations at startup |
 | `Swagger__Enabled` | no (false) | expose `/swagger` |
@@ -62,7 +67,7 @@ Schema changes go through EF migrations only. Never edit tables by hand in produ
 
 Logs: Serilog rolling daily files in `logs/amc-api-YYYYMMDD.log` (30 days kept, 50 MB cap per file). Reminder logs carry plan and reminder ids only; phone numbers, message text and tokens are never logged.
 
-Before the first real send, set `Reminders__TestMode=true`, `Reminders__TestPhone` to your own number and `Reminders__AdminUsernames__0` to your username, then call `POST /api/reminders/run`.
+Before the first real send: keep `Reminders__TestPhoneOnly=true`, set `Reminders__TestPhone` to your own number and `Reminders__AdminUsernames__0` to your username, then call `POST /api/reminders/test-send` (and `?planType=Monthly`). Only after that works, set `Reminders__Enabled=true`; customers are messaged only once you also set `Reminders__TestPhoneOnly=false`.
 
 ## Integration tests
 

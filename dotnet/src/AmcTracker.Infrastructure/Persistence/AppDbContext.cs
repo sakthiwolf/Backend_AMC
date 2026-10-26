@@ -97,6 +97,7 @@ internal class CustomerConfiguration : IEntityTypeConfiguration<Customer>
         e.Property(x => x.InstallationDate).HasColumnType("date");
         e.Property(x => x.ProjectName).HasMaxLength(150);
         e.Property(x => x.ProjectValue).HasColumnType("decimal(12,2)");
+        e.Property(x => x.TotalProjectValue).HasColumnType("decimal(12,2)");
         e.Property(x => x.WhatsAppOptOut).HasDefaultValue(false);
         e.Property(x => x.PlanType).HasConversion<string>().HasMaxLength(10).IsRequired()
             .HasDefaultValue(PlanType.AMC).ValueGeneratedNever();
@@ -115,6 +116,8 @@ internal class CustomerConfiguration : IEntityTypeConfiguration<Customer>
             t.HasCheckConstraint("CK_Customers_PlanType", "[PlanType] IN ('AMC', 'Monthly')");
             t.HasCheckConstraint("CK_Customers_ProjectValue_NonNegative",
                 "[ProjectValue] IS NULL OR [ProjectValue] >= 0");
+            t.HasCheckConstraint("CK_Customers_TotalProjectValue_NonNegative",
+                "[TotalProjectValue] IS NULL OR [TotalProjectValue] >= 0");
             // E.164: "+", a non-zero first digit, 8 to 15 digits in all, digits only.
             t.HasCheckConstraint("CK_Customers_Phone_E164",
                 "LEFT([Phone], 1) = '+' AND LEN([Phone]) BETWEEN 9 AND 16 " +
@@ -167,6 +170,8 @@ internal class ReminderConfiguration : IEntityTypeConfiguration<Reminder>
         e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
         e.Property(x => x.Attempts).HasDefaultValue(0);
         e.Property(x => x.ErrorMessage).HasMaxLength(500);
+        e.Property(x => x.ProviderMessageId).HasMaxLength(100);
+        e.Property(x => x.IsTest).HasDefaultValue(false).ValueGeneratedNever();
         // Enforces "never send twice" at the database level.
         e.HasIndex(x => new { x.PlanId, x.ScheduledDate }).IsUnique().HasDatabaseName("UQ_Reminder_PlanDate");
         e.ToTable(t =>

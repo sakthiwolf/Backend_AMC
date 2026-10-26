@@ -79,12 +79,20 @@ internal class PlanRepository(AppDbContext db) : IPlanRepository
         return (items, total);
     }
 
-    public Task<List<Plan>> ListRemindersDueAsync(DateOnly today, CancellationToken ct = default) =>
+    public Task<List<Plan>> ListRemindersDueAsync(DateOnly from, DateOnly today, CancellationToken ct = default) =>
         db.Plans.AsNoTracking().Include(p => p.Customer)
-            .Where(p => p.ReminderDate == today && p.Renewal == null
-                && p.Customer!.IsActive && !p.Customer.WhatsAppOptOut)
-            .OrderBy(p => p.PlanId)
+            .Where(p => p.ReminderDate >= from && p.ReminderDate <= today && today <= p.EndDate
+                && p.Renewal == null
+                && p.Customer!.IsActive && !p.Customer.WhatsAppOptOut
+                // Catch-up guards: a plan added after its reminder date never sends a late reminder, and a plan
+                // with a Sent reminder is never sent another.
+                && DateOnly.FromDateTime(p.CreatedAt.AddMinutes(IstOffsetMinutes)) <= p.ReminderDate
+                && !db.Reminders.Any(r => r.PlanId == p.PlanId && r.Status == ReminderStatus.Sent))
+            .OrderBy(p => p.ReminderDate).ThenBy(p => p.PlanId)
             .ToListAsync(ct);
+
+    /// <summary>Asia/Kolkata is UTC+05:30 all year (no daylight saving). CreatedAt is stored in UTC.</summary>
+    private const int IstOffsetMinutes = 330;
 
     public void Add(Plan plan) => db.Plans.Add(plan);
 

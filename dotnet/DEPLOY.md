@@ -19,9 +19,16 @@ Production settings are environment variables (see README). Never commit them. C
    ASPNETCORE_ENVIRONMENT=Production
    ConnectionStrings__Default=Server=<host>,<port>;Database=<db>;User Id=<user>;Password=<password>;TrustServerCertificate=True;Encrypt=True
    Jwt__Secret=<32+ random characters>
-   WhatsApp__Token=<token>
-   WhatsApp__PhoneNumberId=<id>
+   WhatsApp__Provider=Wacto
+   WhatsApp__BaseUrl=<from the Wacto console, https://...>
+   WhatsApp__ApiVersion=<from the Wacto console>
+   WhatsApp__PhoneNumberId=<from the Wacto console>
+   WhatsApp__Token=<from the Wacto console>
+   Reminders__Enabled=false
+   Reminders__TestPhoneOnly=true
+   Reminders__TestPhone=<your own number, E.164>
    ```
+   With `WhatsApp__Provider=Wacto` (also the default) the API will not start until the four WhatsApp values are set. Use `WhatsApp__Provider=Fake` to run without WhatsApp. Turn `Reminders__Enabled` on, and later `Reminders__TestPhoneOnly` off, only after `POST /api/reminders/test-send` works.
 5. **systemd** `/etc/systemd/system/amc-api.service`:
    ```ini
    [Unit]

@@ -4,6 +4,8 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AmcTracker.Application.Abstractions;
+using AmcTracker.Application.Options;
+using AmcTracker.Infrastructure.Jobs;
 using AmcTracker.Infrastructure.Persistence;
 using AmcTracker.Infrastructure.Services;
 using Microsoft.AspNetCore.Hosting;
@@ -13,6 +15,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace AmcTracker.IntegrationTests;
 
@@ -71,6 +75,54 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
 
     /// <summary>Records every send; never contacts WhatsApp. Set FailWith to simulate errors.</summary>
     public FakeWhatsAppSender Whatsapp { get; } = new();
+
+    /// <summary>
+    /// A stand-in for the Wacto HTTP endpoint. While <see cref="UseWacto"/> is true the API sends through the
+    /// real <see cref="WhatsAppCloudSender"/>, whose HttpClient talks only to this handler: nothing leaves the
+    /// machine.
+    /// </summary>
+    public WactoStub Wacto { get; } = new();
+    public bool UseWacto { get; set; }
+
+    /// <summary>The settings the Wacto sender uses in tests. Fake values only.</summary>
+    public WhatsAppOptions WactoOptions { get; private set; } = DefaultWactoOptions();
+
+    /// <summary>Reminder settings the API reads; tests may change them, <see cref="ResetAsync"/> restores them.</summary>
+    public ReminderOptions Reminders { get; } = DefaultReminders();
+
+    /// <summary>This run's API log files (Serilog), so tests can check what was logged.</summary>
+    public string LogDirectory { get; } = Path.Combine(Path.GetTempPath(), "amc-tests", Guid.NewGuid().ToString("N"));
+
+    public const string WactoToken = "test-token-not-real-0123456789";
+
+    public static WhatsAppOptions DefaultWactoOptions() => new()
+    {
+        Provider = WhatsAppProviders.Wacto,
+        BaseUrl = "https://wacto.invalid",
+        ApiVersion = "v99.0",
+        PhoneNumberId = "pnid-123",
+        Token = WactoToken,
+    };
+
+    private static ReminderOptions DefaultReminders() => new() { Enabled = true, TestPhoneOnly = false };
+
+    private static void Restore(ReminderOptions o)
+    {
+        var d = DefaultReminders();
+        o.Enabled = d.Enabled;
+        o.TestPhoneOnly = d.TestPhoneOnly;
+        o.TestPhone = d.TestPhone;
+        o.TestMode = d.TestMode;
+        o.UsedDeprecatedTestMode = d.UsedDeprecatedTestMode;
+    }
+
+    /// <summary>Use different Wacto settings (e.g. another auth header) for the rest of this test.</summary>
+    public void ConfigureWacto(Action<WhatsAppOptions> change)
+    {
+        var o = DefaultWactoOptions();
+        change(o);
+        WactoOptions = o;
+    }
     public TestClock Clock { get; } = new();
     public SqlLog Sql { get; } = new();
     public IConfiguration TestConfig { get; } = new ConfigurationBuilder()
@@ -98,9 +150,8 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("Jwt__Secret", "integration-test-signing-key-0123456789abcdef");
         Environment.SetEnvironmentVariable("Reminders__Enabled", "false");
         Environment.SetEnvironmentVariable("Reminders__AdminUsernames__0", "staff");
-        Environment.SetEnvironmentVariable("WhatsApp__UseFake", "true");
-        Environment.SetEnvironmentVariable("Serilog__WriteTo__0__Args__path",
-            Path.Combine(Path.GetTempPath(), "amc-tests", "log-.txt"));
+        Environment.SetEnvironmentVariable("WhatsApp__Provider", "Fake");
+        Environment.SetEnvironmentVariable("Serilog__WriteTo__0__Args__path", Path.Combine(LogDirectory, "log-.txt"));
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -109,7 +160,13 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         builder.ConfigureServices(s =>
         {
             s.RemoveAll<IWhatsAppSender>();
-            s.AddSingleton<IWhatsAppSender>(Whatsapp);
+            s.AddSingleton<IWhatsAppSender>(new SwitchingSender(this));
+            s.RemoveAll<IOptions<ReminderOptions>>();
+            s.AddSingleton<IOptions<ReminderOptions>>(Options.Create(Reminders));
+            // The daily 09:00 job never runs in tests: they call the run endpoint instead.
+            var job = s.Single(d => d.ServiceType == typeof(IHostedService)
+                && d.ImplementationType == typeof(ReminderBackgroundService));
+            s.Remove(job);
             s.RemoveAll<IClock>();
             s.AddSingleton<IClock>(Clock);
             s.ConfigureDbContext<AppDbContext>(o => o.AddInterceptors(Sql));
@@ -131,6 +188,10 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
     public async Task ResetAsync()
     {
         Whatsapp.Clear();
+        Wacto.Reset();
+        UseWacto = false;
+        WactoOptions = DefaultWactoOptions();
+        Restore(Reminders);
         Clock.Fixed = null;
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -176,3 +237,56 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
 
 [CollectionDefinition("Api")]
 public class ApiCollection : ICollectionFixture<ApiFixture>;
+
+/// <summary>Sends through the fake, or through the real Wacto sender pointed at <see cref="WactoStub"/>.</summary>
+internal sealed class SwitchingSender(ApiFixture api) : IWhatsAppSender
+{
+    public Task<WhatsAppSendResult> SendTemplateAsync(
+        string phone, string templateName, IReadOnlyList<string> parameters, CancellationToken ct = default)
+    {
+        if (!api.UseWacto) return api.Whatsapp.SendTemplateAsync(phone, templateName, parameters, ct);
+        var http = new HttpClient(api.Wacto, disposeHandler: false) { Timeout = WhatsAppCloudSender.Timeout };
+        return new WhatsAppCloudSender(http, Options.Create(api.WactoOptions))
+            .SendTemplateAsync(phone, templateName, parameters, ct);
+    }
+}
+
+/// <summary>One request the Wacto stub received.</summary>
+public record WactoRequest(HttpMethod Method, Uri Uri, IReadOnlyDictionary<string, string> Headers, string Body)
+{
+    public JsonElement Json => JsonDocument.Parse(Body).RootElement;
+}
+
+/// <summary>
+/// Fake HttpMessageHandler for the Wacto endpoint: records each request and answers with <see cref="Respond"/>
+/// (default: 200 with a Meta-style message id). Never touches the network.
+/// </summary>
+public sealed class WactoStub : HttpMessageHandler
+{
+    private readonly ConcurrentQueue<WactoRequest> _requests = new();
+    public IReadOnlyList<WactoRequest> Requests => [.. _requests];
+    public Func<HttpRequestMessage, HttpResponseMessage> Respond { get; set; } = Ok;
+    /// <summary>Wait this long (honouring cancellation) before answering, to test timeouts.</summary>
+    public TimeSpan? Delay { get; set; }
+
+    public static HttpResponseMessage Ok(HttpRequestMessage _) => Reply(200, """{"messaging_product":"whatsapp","messages":[{"id":"wamid.TEST1"}]}""");
+
+    public static HttpResponseMessage Reply(int status, string body, string mediaType = "application/json") =>
+        new((System.Net.HttpStatusCode)status) { Content = new StringContent(body, System.Text.Encoding.UTF8, mediaType) };
+
+    public void Reset()
+    {
+        _requests.Clear();
+        Respond = Ok;
+        Delay = null;
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var headers = request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase);
+        var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
+        _requests.Enqueue(new WactoRequest(request.Method, request.RequestUri!, headers, body));
+        if (Delay is { } delay) await Task.Delay(delay, ct);
+        return Respond(request);
+    }
+}

@@ -20,6 +20,10 @@ public class Reminder
     /// <summary>How many sends were tried.</summary>
     public int Attempts { get; set; }
     public string? ErrorMessage { get; set; }
+    /// <summary>The provider's message id (e.g. "wamid...") once sent; null when the provider gave none.</summary>
+    public string? ProviderMessageId { get; set; }
+    /// <summary>True when the message went to the configured test phone instead of the customer.</summary>
+    public bool IsTest { get; set; }
 
     public Plan? Plan { get; set; }
 
