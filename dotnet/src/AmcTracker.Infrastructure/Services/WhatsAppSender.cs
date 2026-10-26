@@ -22,10 +22,11 @@ public class WhatsAppOptions
 
     /// <summary>"Wacto" or "Fake". Unset: Fake in Development, Wacto everywhere else.</summary>
     public string? Provider { get; set; }
-    /// <summary>Provider host, e.g. https://api.example.com (no trailing path needed).</summary>
-    public string BaseUrl { get; set; } = "";
-    /// <summary>Path segment before the phone number id, e.g. v21.0.</summary>
-    public string ApiVersion { get; set; } = "";
+    /// <summary>Provider host (no trailing path needed).</summary>
+    public string BaseUrl { get; set; } = "https://my.wacto.app";
+    /// <summary>Path segment before the phone number id.</summary>
+    public string ApiVersion { get; set; } = "v21.0";
+    /// <summary>Machine variable WhatsApp__PhoneNumberId; never in appsettings.json.</summary>
     public string PhoneNumberId { get; set; } = "";
     /// <summary>Secret. Machine variable WhatsApp__Token only; never in appsettings.json.</summary>
     public string Token { get; set; } = "";
@@ -33,6 +34,10 @@ public class WhatsAppOptions
     /// <summary>Put before the token in the auth header ("Bearer x"). Empty sends the token as-is.</summary>
     public string AuthScheme { get; set; } = "Bearer";
     public string TemplateLanguage { get; set; } = "en";
+    /// <summary>How long one send may take before it counts as a (retryable) timeout.</summary>
+    public int TimeoutSeconds { get; set; } = 15;
+
+    public TimeSpan Timeout => TimeSpan.FromSeconds(TimeoutSeconds);
 
     /// <summary>The configuration keys (not values) that must be set for a real provider and are empty.</summary>
     public IReadOnlyList<string> MissingKeys()
@@ -46,6 +51,7 @@ public class WhatsAppOptions
         if (string.IsNullOrWhiteSpace(Token)) missing.Add("WhatsApp:Token");
         if (string.IsNullOrWhiteSpace(AuthHeaderName)) missing.Add("WhatsApp:AuthHeaderName");
         if (string.IsNullOrWhiteSpace(TemplateLanguage)) missing.Add("WhatsApp:TemplateLanguage");
+        if (TimeoutSeconds is < 1 or > 120) missing.Add("WhatsApp:TimeoutSeconds (1 to 120)");
         return missing;
     }
 
@@ -55,22 +61,25 @@ public class WhatsAppOptions
 }
 
 /// <summary>
-/// Sends an approved template through a Meta Cloud API compatible endpoint (Wacto). Typed HttpClient with a
-/// 15-second timeout. Logs nothing itself: the caller logs ids, HTTP status and duration. The token, phone
-/// number, request body and response body are never logged, and the token never reaches an error message.
+/// Sends an approved template through a Meta Cloud API compatible endpoint (Wacto). Typed HttpClient whose
+/// timeout is WhatsApp:TimeoutSeconds (set where the client is registered). Logs nothing itself: the caller
+/// logs ids, HTTP status and duration. The token, phone number, request body and response body are never
+/// logged, and the token never reaches an error message.
 /// </summary>
 public class WhatsAppCloudSender(HttpClient http, IOptions<WhatsAppOptions> options) : IWhatsAppSender
 {
-    public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
-
     private readonly WhatsAppOptions _opt = options.Value;
 
+    public bool IsFake => false;
+
     public async Task<WhatsAppSendResult> SendTemplateAsync(
-        string phone, string templateName, IReadOnlyList<string> parameters, CancellationToken ct = default)
+        string phone, string templateName, IReadOnlyList<string> parameters, string callbackData,
+        CancellationToken ct = default)
     {
         var payload = new
         {
             messaging_product = "whatsapp",
+            recipient_type = "individual",
             to = phone.Trim().TrimStart('+'), // the API wants digits only
             type = "template",
             template = new
@@ -82,6 +91,7 @@ public class WhatsAppCloudSender(HttpClient http, IOptions<WhatsAppOptions> opti
                     new { type = "body", parameters = parameters.Select(p => new { type = "text", text = p }).ToArray() },
                 },
             },
+            biz_opaque_callback_data = callbackData,
         };
 
         var clock = Stopwatch.StartNew();
@@ -170,7 +180,7 @@ public class WhatsAppCloudSender(HttpClient http, IOptions<WhatsAppOptions> opti
 }
 
 /// <summary>One call recorded by <see cref="FakeWhatsAppSender"/>.</summary>
-public record WhatsAppCall(string Phone, string TemplateName, IReadOnlyList<string> Parameters);
+public record WhatsAppCall(string Phone, string TemplateName, IReadOnlyList<string> Parameters, string CallbackData);
 
 /// <summary>
 /// For tests and Development: records each call in memory and never contacts WhatsApp.
@@ -186,6 +196,8 @@ public class FakeWhatsAppSender : IWhatsAppSender
     public bool FailRetryable { get; set; } = true;
     public string? MessageId { get; set; } = "wamid.fake";
 
+    public bool IsFake => true;
+
     public IReadOnlyList<WhatsAppCall> Calls
     {
         get { lock (_gate) return [.. _calls]; }
@@ -200,9 +212,10 @@ public class FakeWhatsAppSender : IWhatsAppSender
     }
 
     public Task<WhatsAppSendResult> SendTemplateAsync(
-        string phone, string templateName, IReadOnlyList<string> parameters, CancellationToken ct = default)
+        string phone, string templateName, IReadOnlyList<string> parameters, string callbackData,
+        CancellationToken ct = default)
     {
-        lock (_gate) _calls.Add(new WhatsAppCall(phone, templateName, [.. parameters]));
+        lock (_gate) _calls.Add(new WhatsAppCall(phone, templateName, [.. parameters], callbackData));
         return Task.FromResult(FailWith is { } error
             ? WhatsAppSendResult.Failed(error, FailRetryable)
             : new WhatsAppSendResult(true, MessageId));

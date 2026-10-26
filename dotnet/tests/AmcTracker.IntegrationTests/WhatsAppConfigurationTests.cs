@@ -56,11 +56,70 @@ public class WhatsAppConfigurationTests
     }
 
     [Fact]
-    public void Every_missing_Wacto_key_is_named()
+    public void Only_the_phone_number_id_and_token_must_be_set_the_rest_have_defaults()
     {
         var ex = Assert.Throws<InvalidOperationException>(() => Build(Config(("WhatsApp:Provider", "Wacto"))));
-        foreach (var key in new[] { "WhatsApp:BaseUrl", "WhatsApp:ApiVersion", "WhatsApp:PhoneNumberId", "WhatsApp:Token" })
-            Assert.Contains(key, ex.Message);
+        Assert.Contains("WhatsApp:PhoneNumberId", ex.Message);
+        Assert.Contains("WhatsApp:Token", ex.Message);
+        Assert.DoesNotContain("WhatsApp:BaseUrl", ex.Message);
+        Assert.DoesNotContain("WhatsApp:ApiVersion", ex.Message);
+
+        using var sp = Build(Config(("WhatsApp:Provider", "Wacto"), ("WhatsApp:PhoneNumberId", "pnid-123"),
+            ("WhatsApp:Token", ApiFixture.WactoToken)));
+        Assert.IsType<WhatsAppCloudSender>(sp.GetRequiredService<IWhatsAppSender>());
+    }
+
+    [Fact]
+    public void Startup_fails_when_the_phone_number_id_is_missing_naming_the_key_not_a_value()
+    {
+        var config = Config([.. FullWacto.Where(s => s.Item1 != "WhatsApp:PhoneNumberId")]);
+        var ex = Assert.Throws<InvalidOperationException>(() => Build(config));
+        Assert.Contains("WhatsApp:PhoneNumberId", ex.Message);
+        Assert.DoesNotContain(ApiFixture.WactoToken, ex.Message);
+    }
+
+    [Theory]
+    [InlineData(null, 15)]
+    [InlineData("40", 40)]
+    public void The_Wacto_http_client_uses_WhatsApp_TimeoutSeconds(string? setting, int expected)
+    {
+        using var sp = Build(Config(setting is null ? FullWacto : [.. FullWacto, ("WhatsApp:TimeoutSeconds", setting)]));
+        var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(IWhatsAppSender));
+        Assert.Equal(TimeSpan.FromSeconds(expected), http.Timeout);
+    }
+
+    [Fact]
+    public void A_timeout_out_of_range_is_refused()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => Build(Config([.. FullWacto, ("WhatsApp:TimeoutSeconds", "0")])));
+        Assert.Contains("WhatsApp:TimeoutSeconds", ex.Message);
+    }
+
+    [Fact]
+    public void The_Fake_sender_says_it_is_fake_and_the_Wacto_sender_does_not()
+    {
+        using (var sp = Build(Config(("WhatsApp:Provider", "Fake"))))
+            Assert.True(sp.GetRequiredService<IWhatsAppSender>().IsFake);
+        using (var sp = Build(Config(FullWacto)))
+            Assert.False(sp.GetRequiredService<IWhatsAppSender>().IsFake);
+    }
+
+    [Fact]
+    public void Startup_fails_without_a_connection_string_naming_the_key()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Default"] = "", ["WhatsApp:Provider"] = "Fake",
+        }).Build();
+        var ex = Assert.Throws<InvalidOperationException>(() => Build(config));
+        Assert.Contains("ConnectionStrings:Default", ex.Message);
+    }
+
+    [Fact]
+    public void Startup_fails_without_a_JWT_secret_naming_the_key()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => JwtTokenService.SigningKey(new JwtOptions { Secret = "" }));
+        Assert.Contains("Jwt:Secret", ex.Message);
     }
 
     [Fact]
@@ -115,7 +174,7 @@ public class WhatsAppConfigurationTests
         Assert.Equal((false, true), (reminders.Enabled, reminders.TestPhoneOnly));
         Assert.False(sp.GetRequiredService<IOptions<ReminderJobOptions>>().Value.Enabled);
         var templates = sp.GetRequiredService<IOptions<WhatsAppTemplateOptions>>().Value;
-        Assert.Equal(("amc_yearly_reminder", "amc_monthly_reminder"), (templates.AMC, templates.Monthly));
+        Assert.Equal(("amc_template", "monthly_template"), (templates.AMC, templates.Monthly));
     }
 
     [Fact]
@@ -128,9 +187,19 @@ public class WhatsAppConfigurationTests
             Path.Combine(dir.FullName, "src", "AmcTracker.Api", "appsettings.json"))).RootElement;
 
         Assert.False(json.GetProperty("Reminders").GetProperty("Enabled").GetBoolean());
+        Assert.True(json.GetProperty("Reminders").GetProperty("TestPhoneOnly").GetBoolean());
+        Assert.Equal("", json.GetProperty("Reminders").GetProperty("TestPhone").GetString());
         var whatsApp = json.GetProperty("WhatsApp");
-        foreach (var key in new[] { "BaseUrl", "PhoneNumberId", "Token" })
+        foreach (var key in new[] { "PhoneNumberId", "Token" })
             Assert.Equal("", whatsApp.GetProperty(key).GetString());
+        Assert.Equal(("https://my.wacto.app", "v21.0"),
+            (whatsApp.GetProperty("BaseUrl").GetString(), whatsApp.GetProperty("ApiVersion").GetString()));
+        var templates = whatsApp.GetProperty("Templates");
+        Assert.Equal(("amc_template", "monthly_template"),
+            (templates.GetProperty("AMC").GetString(), templates.GetProperty("Monthly").GetString()));
+        // Secrets live in machine variables (or dotnet user-secrets locally), never in the repo.
+        Assert.Equal("", json.GetProperty("ConnectionStrings").GetProperty("Default").GetString());
+        Assert.Equal("", json.GetProperty("Jwt").GetProperty("Secret").GetString());
         Assert.False(json.GetProperty("Reminders").TryGetProperty("TemplateName", out _));
         Assert.False(whatsApp.TryGetProperty("TemplateName", out _));
     }

@@ -84,7 +84,7 @@ public static class DependencyInjection
                     "or set WhatsApp__Provider=Fake.");
             services.AddHttpClient<IWhatsAppSender, WhatsAppCloudSender>(http =>
                 {
-                    http.Timeout = WhatsAppCloudSender.Timeout;
+                    http.Timeout = whatsApp.Timeout;
                 })
                 // The default HttpClient logs print request URLs; keep provider details out of the logs.
                 .RemoveAllLoggers();

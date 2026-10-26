@@ -19,12 +19,12 @@ public class WactoSenderTests
     {
         var options = ApiFixture.DefaultWactoOptions();
         change?.Invoke(options);
-        var http = new HttpClient(_stub, disposeHandler: false) { Timeout = timeout ?? WhatsAppCloudSender.Timeout };
+        var http = new HttpClient(_stub, disposeHandler: false) { Timeout = timeout ?? options.Timeout };
         return new WhatsAppCloudSender(http, Options.Create(options));
     }
 
     private Task<AmcTracker.Application.Abstractions.WhatsAppSendResult> Send(WhatsAppCloudSender sender) =>
-        sender.SendTemplateAsync(Phone, "amc_yearly_reminder", Parameters);
+        sender.SendTemplateAsync(Phone, "amc_template", Parameters, "42");
 
     [Fact]
     public async Task Posts_to_BaseUrl_ApiVersion_PhoneNumberId_messages()
@@ -57,10 +57,12 @@ public class WactoSenderTests
 
         var body = _stub.Requests.Single().Json;
         Assert.Equal("whatsapp", body.GetProperty("messaging_product").GetString());
+        Assert.Equal("individual", body.GetProperty("recipient_type").GetString());
         Assert.Equal("910000000101", body.GetProperty("to").GetString());
         Assert.Equal("template", body.GetProperty("type").GetString());
+        Assert.Equal("42", body.GetProperty("biz_opaque_callback_data").GetString());
         var template = body.GetProperty("template");
-        Assert.Equal("amc_yearly_reminder", template.GetProperty("name").GetString());
+        Assert.Equal("amc_template", template.GetProperty("name").GetString());
         Assert.Equal("en", template.GetProperty("language").GetProperty("code").GetString());
         var component = template.GetProperty("components").EnumerateArray().Single();
         Assert.Equal("body", component.GetProperty("type").GetString());
@@ -177,9 +179,13 @@ public class WactoSenderTests
     }
 
     [Fact]
-    public void The_timeout_is_15_seconds()
+    public void The_defaults_are_Wacto_v21_and_a_15_second_timeout()
     {
-        Assert.Equal(TimeSpan.FromSeconds(15), WhatsAppCloudSender.Timeout);
+        var o = new WhatsAppOptions();
+        Assert.Equal(("https://my.wacto.app", "v21.0", 15), (o.BaseUrl, o.ApiVersion, o.TimeoutSeconds));
+        Assert.Equal(TimeSpan.FromSeconds(15), o.Timeout);
+        Assert.Equal(("Authorization", "Bearer", "en"), (o.AuthHeaderName, o.AuthScheme, o.TemplateLanguage));
+        Assert.Equal(new Uri("https://my.wacto.app/v21.0/pnid-1/messages"), new WhatsAppOptions { PhoneNumberId = "pnid-1" }.MessagesUri());
     }
 
     [Fact]

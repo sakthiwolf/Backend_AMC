@@ -4,6 +4,7 @@ using AmcTracker.Application.Services;
 using AmcTracker.Domain.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace AmcTracker.Api.Controllers;
 
@@ -87,13 +88,16 @@ public class RemindersController(ReminderService reminders) : ControllerBase
     public Task<ReminderRunResult> Run(CancellationToken ct) => reminders.RunDailyAsync(ct);
 
     /// <summary>
-    /// Sends the template for <paramref name="planType"/> (default AMC) once to Reminders:TestPhone with sample
-    /// values (admin only). Stores nothing. 409 test_phone_not_set when no test phone is configured.
+    /// Sends the template for the body's planType (default AMC) once to Reminders:TestPhone with sample values
+    /// (admin only). Stores nothing. The old ?planType= query is still read for one release; the body wins.
+    /// 409 test_phone_not_set when no test phone is configured, 409 provider_not_configured when the provider is Fake.
     /// </summary>
     [HttpPost("test-send")]
     [Authorize(Policy = AdminRequirement.Policy)]
-    public Task<TestSendResultDto> TestSend([FromQuery] PlanType? planType, CancellationToken ct) =>
-        reminders.TestSendAsync(planType ?? PlanType.AMC, ct);
+    public Task<TestSendResultDto> TestSend(
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] TestSendRequest? body,
+        [FromQuery] PlanType? planType, CancellationToken ct) =>
+        reminders.TestSendAsync(body?.PlanType ?? planType ?? PlanType.AMC, ct);
 
     /// <summary>"Try again" on one failed reminder. 409 when it cannot be retried (sent, out of attempts, plan over).</summary>
     [HttpPost("{id:int}/retry")]

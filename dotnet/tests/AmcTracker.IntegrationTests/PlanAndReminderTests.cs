@@ -484,7 +484,7 @@ public class ReminderJobTests : IAsyncLifetime
         var run = await c.Run();
         Assert.Equal((2, 2), (run.GetProperty("processed").GetInt32(), run.GetProperty("sent").GetInt32()));
         var call = Assert.Single(_api.Whatsapp.Calls, x => x.Phone == "+919000000021");
-        Assert.Equal("amc_monthly_reminder", call.TemplateName);
+        Assert.Equal("monthly_template", call.TemplateName);
         var end = PlanScheduleCalculator.Calculate(PlanType.Monthly, Plans.StartRemindingOn(PlanType.Monthly, Day)).EndDate;
         Assert.Equal(["Due Co", "CCTV", end.ToString("d MMM yyyy", CultureInfo.InvariantCulture)], call.Parameters);
 

@@ -66,10 +66,12 @@ public sealed class SqlLog : DbCommandInterceptor
 /// <summary>
 /// Starts the real API against a throwaway SQL Server database. The connection string comes from
 /// configuration (ConnectionStrings:Test in appsettings.json, or env var ConnectionStrings__Test).
-/// The database is dropped and recreated through the EF migrations, so its name must contain "Test".
+/// The database is dropped and recreated through the EF migrations, so it must be exactly
+/// <see cref="TestDatabase"/>: no other database (dev, reports test, production) is ever touched.
 /// </summary>
 public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
 {
+    public const string TestDatabase = "AMCTracker_Test";
     public const string Password = "correct-horse-battery";
     public const string Fingerprint = "11111111-1111-4111-8111-111111111111";
 
@@ -141,9 +143,9 @@ public class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
     public ApiFixture()
     {
         var db = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(ConnectionString).InitialCatalog;
-        if (!db.Contains("Test", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(db, TestDatabase, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
-                $"Refusing to wipe database '{db}': the test database name must contain 'Test'.");
+                $"Refusing to wipe database '{db}': integration tests run only against {TestDatabase}.");
 
         // Environment variables are read by Program before any test hook can run.
         Environment.SetEnvironmentVariable("ConnectionStrings__Default", ConnectionString);
@@ -241,13 +243,16 @@ public class ApiCollection : ICollectionFixture<ApiFixture>;
 /// <summary>Sends through the fake, or through the real Wacto sender pointed at <see cref="WactoStub"/>.</summary>
 internal sealed class SwitchingSender(ApiFixture api) : IWhatsAppSender
 {
+    public bool IsFake => !api.UseWacto;
+
     public Task<WhatsAppSendResult> SendTemplateAsync(
-        string phone, string templateName, IReadOnlyList<string> parameters, CancellationToken ct = default)
+        string phone, string templateName, IReadOnlyList<string> parameters, string callbackData,
+        CancellationToken ct = default)
     {
-        if (!api.UseWacto) return api.Whatsapp.SendTemplateAsync(phone, templateName, parameters, ct);
-        var http = new HttpClient(api.Wacto, disposeHandler: false) { Timeout = WhatsAppCloudSender.Timeout };
+        if (!api.UseWacto) return api.Whatsapp.SendTemplateAsync(phone, templateName, parameters, callbackData, ct);
+        var http = new HttpClient(api.Wacto, disposeHandler: false) { Timeout = api.WactoOptions.Timeout };
         return new WhatsAppCloudSender(http, Options.Create(api.WactoOptions))
-            .SendTemplateAsync(phone, templateName, parameters, ct);
+            .SendTemplateAsync(phone, templateName, parameters, callbackData, ct);
     }
 }
 

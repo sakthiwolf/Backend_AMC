@@ -37,9 +37,9 @@ public class WhatsAppTemplateOptions
     public const string Section = "WhatsApp:Templates";
 
     /// <summary>Body parameters: customer name, project name, EndDate ("12 Oct 2027").</summary>
-    public string AMC { get; set; } = "amc_yearly_reminder";
+    public string AMC { get; set; } = "amc_template";
     /// <summary>Same three body parameters as <see cref="AMC"/>.</summary>
-    public string Monthly { get; set; } = "amc_monthly_reminder";
+    public string Monthly { get; set; } = "monthly_template";
 
     public string For(AmcTracker.Domain.Enums.PlanType type) =>
         type == AmcTracker.Domain.Enums.PlanType.Monthly ? Monthly : AMC;

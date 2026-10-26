@@ -150,7 +150,10 @@ public record ReminderDto(
     bool IsTest = false);
 
 /// <summary>Result of POST /api/reminders/test-send. Nothing is stored.</summary>
-public record TestSendResultDto(bool Success, string? ProviderMessageId, string? ErrorMessage);
+public record TestSendResultDto(bool Success, string? ProviderMessageId, int? HttpStatus, string? ErrorMessage);
+
+/// <summary>Body of POST /api/reminders/test-send. Optional: no body means AMC.</summary>
+public record TestSendRequest(PlanType? PlanType);
 
 public record ReminderRunResult(int Processed, int Sent, int Failed, int Skipped);
 

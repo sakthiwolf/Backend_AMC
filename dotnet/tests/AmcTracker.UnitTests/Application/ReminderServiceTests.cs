@@ -54,11 +54,11 @@ public class ReminderServiceTests
     }
 
     private void Succeeds() => _sender
-        .SendTemplateAsync(default!, default!, default!, default)
+        .SendTemplateAsync(default!, default!, default!, default!, default)
         .ReturnsForAnyArgs(new WhatsAppSendResult(true, "wamid.1"));
 
     private void Fails(string error = "HTTP 500: down", bool retryable = true) => _sender
-        .SendTemplateAsync(default!, default!, default!, default)
+        .SendTemplateAsync(default!, default!, default!, default!, default)
         .ReturnsForAnyArgs(WhatsAppSendResult.Failed(error, retryable));
 
     private void Due(params Plan[] plans) =>
@@ -85,9 +85,9 @@ public class ReminderServiceTests
         Assert.Equal(Today, added.ScheduledDate);
         Assert.Equal(1, added.Attempts);
         Assert.NotNull(added.SentAt);
-        await _sender.Received(1).SendTemplateAsync(CustomerPhone, "amc_yearly_reminder",
+        await _sender.Received(1).SendTemplateAsync(CustomerPhone, "amc_template",
             Arg.Is<IReadOnlyList<string>>(p => p.SequenceEqual(new[] { "Asha", "CCTV", "12 Oct 2027" })),
-            Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -100,10 +100,10 @@ public class ReminderServiceTests
 
         await Service().RunDailyAsync();
 
-        await _sender.Received(1).SendTemplateAsync(Arg.Any<string>(), "amc_yearly_reminder",
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
-        await _sender.Received(1).SendTemplateAsync(Arg.Any<string>(), "amc_monthly_reminder",
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+        await _sender.Received(1).SendTemplateAsync(Arg.Any<string>(), "amc_template",
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _sender.Received(1).SendTemplateAsync(Arg.Any<string>(), "monthly_template",
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
 
         _templates.AMC = "yearly_v2";
         _templates.Monthly = "monthly_v2";
@@ -111,9 +111,9 @@ public class ReminderServiceTests
         _reminders.GetAsync(default, default, default).ReturnsForAnyArgs((Reminder?)null);
         await Service().RunDailyAsync();
         await _sender.Received(1).SendTemplateAsync(Arg.Any<string>(), "yearly_v2",
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
         await _sender.Received(1).SendTemplateAsync(Arg.Any<string>(), "monthly_v2",
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -126,7 +126,7 @@ public class ReminderServiceTests
         var result = await Service().RunDailyAsync();
 
         Assert.Equal((1, 0), (result.Skipped, result.Sent));
-        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default);
+        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default!, default);
         await _reminders.DidNotReceiveWithAnyArgs().TryAddAsync(default!, default);
     }
 
@@ -139,7 +139,7 @@ public class ReminderServiceTests
         var result = await Service().RunDailyAsync();
 
         Assert.Equal(1, result.Skipped);
-        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default);
+        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default!, default);
     }
 
     [Fact]
@@ -158,14 +158,14 @@ public class ReminderServiceTests
         Assert.Equal(1, added.Attempts);
         Assert.Equal("HTTP 500: down", added.ErrorMessage);
         Assert.Null(added.SentAt);
-        await _sender.ReceivedWithAnyArgs(1).SendTemplateAsync(default!, default!, default!, default);
+        await _sender.ReceivedWithAnyArgs(1).SendTemplateAsync(default!, default!, default!, default!, default);
     }
 
     [Fact]
     public async Task A_sender_exception_counts_as_a_failure()
     {
         Due(DuePlan());
-        _sender.SendTemplateAsync(default!, default!, default!, default)
+        _sender.SendTemplateAsync(default!, default!, default!, default!, default)
             .ReturnsForAnyArgs<WhatsAppSendResult>(_ => throw new HttpRequestException("boom"));
         Reminder? added = null;
         _reminders.When(r => r.TryAddAsync(Arg.Any<Reminder>(), Arg.Any<CancellationToken>()))
@@ -207,9 +207,9 @@ public class ReminderServiceTests
         await Service().RunDailyAsync();
 
         await _sender.Received(1).SendTemplateAsync("+911111111111", Arg.Any<string>(),
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
         await _sender.DidNotReceive().SendTemplateAsync(CustomerPhone, Arg.Any<string>(),
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -221,7 +221,7 @@ public class ReminderServiceTests
         var result = await Service().RunDailyAsync();
 
         Assert.Equal(0, result.Processed);
-        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default);
+        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default!, default);
         await _reminders.DidNotReceiveWithAnyArgs().TryAddAsync(default!, default);
     }
 
@@ -229,7 +229,7 @@ public class ReminderServiceTests
     public async Task Logs_carry_ids_only_never_the_phone_number_or_message()
     {
         Due(DuePlan(1), DuePlan(2));
-        _sender.SendTemplateAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        _sender.SendTemplateAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new WhatsAppSendResult(true, "wamid.1", HttpStatus: 200),
                 WhatsAppSendResult.Failed($"HTTP 400: invalid {CustomerPhone}", false, httpStatus: 400));
 
@@ -270,7 +270,7 @@ public class ReminderServiceTests
         FailedReminder(attempts);
         var ex = await Assert.ThrowsAsync<AppException>(() => Service().RetryAsync(9));
         Assert.Equal((409, code), (ex.StatusCode, ex.Code));
-        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default);
+        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default!, default);
     }
 
     [Fact]
@@ -300,7 +300,7 @@ public class ReminderServiceTests
         var defaults = new ReminderOptions();
         Assert.False(defaults.Enabled);
         Assert.True(defaults.TestPhoneOnly);
-        Assert.Equal(("amc_yearly_reminder", "amc_monthly_reminder"),
+        Assert.Equal(("amc_template", "monthly_template"),
             (new WhatsAppTemplateOptions().AMC, new WhatsAppTemplateOptions().Monthly));
     }
 
@@ -313,7 +313,7 @@ public class ReminderServiceTests
         var result = await Service().RunDailyAsync();
 
         Assert.Equal(0, result.Processed);
-        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default);
+        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default!, default);
         await _plans.DidNotReceiveWithAnyArgs().ListRemindersDueAsync(default, default, default);
         await _reminders.DidNotReceiveWithAnyArgs().ListRetryableAsync(default, default);
         Assert.Equal("Reminder run skipped: Reminders:Enabled is false.", Assert.Single(_log.Lines));
@@ -340,7 +340,7 @@ public class ReminderServiceTests
         Assert.Equal(("wamid.1", false), (added!.ProviderMessageId, added.IsTest));
         await _sender.Received(1).SendTemplateAsync(CustomerPhone, Arg.Any<string>(),
             Arg.Is<IReadOnlyList<string>>(p => p.SequenceEqual(new[] { "Asha", "CCTV", "12 Oct 2027" })),
-            Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<CancellationToken>());
         Assert.Equal("5 Nov 2026", ReminderService.FormatDate(new DateOnly(2026, 11, 5)));
         Assert.Equal("12 Sep 2027", ReminderService.FormatDate(new DateOnly(2027, 9, 12)));
     }
@@ -349,7 +349,7 @@ public class ReminderServiceTests
     public async Task A_success_without_a_message_id_is_Sent_and_logs_a_warning_with_the_plan_id_only()
     {
         Due(DuePlan(7));
-        _sender.SendTemplateAsync(default!, default!, default!, default)
+        _sender.SendTemplateAsync(default!, default!, default!, default!, default)
             .ReturnsForAnyArgs(new WhatsAppSendResult(true, null, HttpStatus: 200));
         Reminder? added = null;
         _reminders.When(r => r.TryAddAsync(Arg.Any<Reminder>(), Arg.Any<CancellationToken>()))
@@ -375,7 +375,7 @@ public class ReminderServiceTests
 
         Assert.Equal((3, true, ReminderStatus.Sent), (added!.PlanId, added.IsTest, added.Status));
         await _sender.Received(1).SendTemplateAsync("+910000000999", Arg.Any<string>(),
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -398,7 +398,7 @@ public class ReminderServiceTests
         _sender.ClearReceivedCalls();
         var ex = await Assert.ThrowsAsync<AppException>(() => Service().RetryAsync(9));
         Assert.Equal((409, "reminder_out_of_attempts"), (ex.StatusCode, ex.Code));
-        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default);
+        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default!, default);
     }
 
     [Fact]
@@ -423,12 +423,12 @@ public class ReminderServiceTests
         _options.TestPhone = "";
         var ex = await Assert.ThrowsAsync<AppException>(() => Service().TestSendAsync(PlanType.AMC));
         Assert.Equal((409, "test_phone_not_set"), (ex.StatusCode, ex.Code));
-        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default);
+        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default!, default);
     }
 
     [Theory]
-    [InlineData(PlanType.AMC, "amc_yearly_reminder")]
-    [InlineData(PlanType.Monthly, "amc_monthly_reminder")]
+    [InlineData(PlanType.AMC, "amc_template")]
+    [InlineData(PlanType.Monthly, "monthly_template")]
     public async Task Test_send_goes_to_the_test_phone_with_that_plan_types_template_and_stores_nothing(
         PlanType type, string template)
     {
@@ -439,8 +439,8 @@ public class ReminderServiceTests
 
         Assert.Equal((true, "wamid.1", (string?)null), (result.Success, result.ProviderMessageId, result.ErrorMessage));
         await _sender.Received(1).SendTemplateAsync("+910000000999", template,
-            Arg.Is<IReadOnlyList<string>>(p => p.Count == 3 && p[0] == "Sample Customer" && p[2] == "12 Sep 2028"),
-            Arg.Any<CancellationToken>());
+            Arg.Is<IReadOnlyList<string>>(p => p.SequenceEqual(new[] { "Test Customer", "Test Project", "12 Oct 2027" })),
+            "test", Arg.Any<CancellationToken>()); // today + 30 days; callback data "test"
         await _reminders.DidNotReceiveWithAnyArgs().TryAddAsync(default!, default);
         await _uow.DidNotReceiveWithAnyArgs().SaveChangesAsync(default);
     }
@@ -453,6 +453,57 @@ public class ReminderServiceTests
         var result = await Service().TestSendAsync(PlanType.AMC);
         Assert.Equal((false, (string?)null, "HTTP 401: invalid token"),
             (result.Success, result.ProviderMessageId, result.ErrorMessage));
+    }
+
+    [Fact]
+    public async Task Test_send_returns_the_http_status()
+    {
+        _options.TestPhone = "+910000000999";
+        _sender.SendTemplateAsync(default!, default!, default!, default!, default)
+            .ReturnsForAnyArgs(new WhatsAppSendResult(true, "wamid.1", HttpStatus: 200));
+        Assert.Equal(200, (await Service().TestSendAsync(PlanType.AMC)).HttpStatus);
+    }
+
+    [Fact]
+    public async Task Test_send_with_the_fake_provider_is_409_provider_not_configured()
+    {
+        _options.TestPhone = "+910000000999";
+        _sender.IsFake.Returns(true);
+
+        var ex = await Assert.ThrowsAsync<AppException>(() => Service().TestSendAsync(PlanType.AMC));
+
+        Assert.Equal((409, "provider_not_configured"), (ex.StatusCode, ex.Code));
+        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task The_callback_data_is_the_reminder_id_only()
+    {
+        Due(DuePlan());
+        _reminders.When(r => r.TryAddAsync(Arg.Any<Reminder>(), Arg.Any<CancellationToken>()))
+            .Do(c => c.Arg<Reminder>().ReminderId = 321); // the id the database gives the Pending row
+
+        await Service().RunDailyAsync();
+
+        await _sender.Received(1).SendTemplateAsync(CustomerPhone, Arg.Any<string>(),
+            Arg.Any<IReadOnlyList<string>>(), "321", Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task An_empty_project_name_is_sent_as_your_project(string? projectName)
+    {
+        var plan = DuePlan();
+        plan.Customer!.ProjectName = projectName;
+        Due(plan);
+
+        await Service().RunDailyAsync();
+
+        await _sender.Received(1).SendTemplateAsync(CustomerPhone, Arg.Any<string>(),
+            Arg.Is<IReadOnlyList<string>>(p => p.SequenceEqual(new[] { "Asha", "your project", "12 Oct 2027" })),
+            Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

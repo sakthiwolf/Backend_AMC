@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using AmcTracker.Domain.Entities;
 using AmcTracker.Domain.Enums;
@@ -58,9 +59,43 @@ public class WactoReminderTests : IAsyncLifetime
         var request = Assert.Single(Wacto.Requests);
         Assert.Equal("https://wacto.invalid/v99.0/pnid-123/messages", request.Uri.ToString());
         Assert.Equal("910000000201", request.Json.GetProperty("to").GetString());
+        Assert.Equal("individual", request.Json.GetProperty("recipient_type").GetString());
         var row = (await Row(planId))!;
         Assert.Equal((ReminderStatus.Sent, "wamid.TEST1", false, 1), (row.Status, row.ProviderMessageId, row.IsTest, row.Attempts));
         Assert.Null(row.ErrorMessage);
+        // The callback data is the reminder id and nothing else.
+        Assert.Equal(row.ReminderId.ToString(), request.Json.GetProperty("biz_opaque_callback_data").GetString());
+    }
+
+    [Fact]
+    public async Task A_200_without_an_id_is_Sent_with_no_provider_message_id()
+    {
+        var c = await At(Day);
+        var planId = await Seed(c, Day, "+910000000205");
+        Wacto.Respond = _ => WactoStub.Reply(200, """{"messaging_product":"whatsapp"}""");
+
+        Assert.Equal(1, (await c.Run()).GetProperty("sent").GetInt32());
+        var row = (await Row(planId))!;
+        Assert.Equal((ReminderStatus.Sent, (string?)null), (row.Status, row.ProviderMessageId));
+    }
+
+    [Fact]
+    public async Task An_empty_project_name_is_sent_as_your_project()
+    {
+        var c = await At(Day);
+        var planId = await Seed(c, Day, "+910000000206");
+        await _api.WithDbAsync(async db =>
+        {
+            var customer = await db.Plans.Where(p => p.PlanId == planId).Select(p => p.Customer!).SingleAsync();
+            customer.ProjectName = null;
+            return await db.SaveChangesAsync();
+        });
+
+        await c.Run();
+
+        var parameters = Assert.Single(Wacto.Requests).Json.GetProperty("template").GetProperty("components")[0]
+            .GetProperty("parameters").EnumerateArray().Select(p => p.GetProperty("text").GetString()).ToArray();
+        Assert.Equal("your project", parameters[1]);
     }
 
     [Fact]
@@ -76,11 +111,11 @@ public class WactoReminderTests : IAsyncLifetime
             r => r.Json.GetProperty("template").GetProperty("name").GetString()!,
             r => r.Json.GetProperty("template").GetProperty("components")[0].GetProperty("parameters")
                 .EnumerateArray().Select(p => p.GetProperty("text").GetString()!).ToArray());
-        Assert.Equal(["amc_monthly_reminder", "amc_yearly_reminder"], byName.Keys.Order().ToArray());
-        Assert.Equal("Yearly Co", byName["amc_yearly_reminder"][0]);
-        Assert.Equal("CCTV", byName["amc_yearly_reminder"][1]);
-        Assert.Equal("20 Dec 2026", byName["amc_yearly_reminder"][2]); // AMC: ends one month after the reminder
-        Assert.Equal(["Monthly Co", "CCTV", "27 Nov 2026"], byName["amc_monthly_reminder"]); // Monthly: 7 days
+        Assert.Equal(["amc_template", "monthly_template"], byName.Keys.Order().ToArray());
+        Assert.Equal("Yearly Co", byName["amc_template"][0]);
+        Assert.Equal("CCTV", byName["amc_template"][1]);
+        Assert.Equal("20 Dec 2026", byName["amc_template"][2]); // AMC: ends one month after the reminder
+        Assert.Equal(["Monthly Co", "CCTV", "27 Nov 2026"], byName["monthly_template"]); // Monthly: 7 days
     }
 
     [Fact]
@@ -276,21 +311,57 @@ public class WactoReminderTests : IAsyncLifetime
         var c = await At(Day);
         _api.Reminders.TestPhone = "+910000000999";
 
-        var res = await c.PostAsync("/api/reminders/test-send", null);
-        var monthly = await c.PostAsync("/api/reminders/test-send?planType=Monthly", null);
+        var res = await c.PostAsync("/api/reminders/test-send", null); // no body: AMC
+        var monthly = await c.PostAsJsonAsync("/api/reminders/test-send", new { planType = "Monthly" });
 
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
         var body = await res.Json();
         Assert.True(body.GetProperty("success").GetBoolean());
         Assert.Equal("wamid.TEST1", body.GetProperty("providerMessageId").GetString());
+        Assert.Equal(200, body.GetProperty("httpStatus").GetInt32());
         Assert.Equal(System.Text.Json.JsonValueKind.Null, body.GetProperty("errorMessage").ValueKind);
         Assert.Equal(HttpStatusCode.OK, monthly.StatusCode);
 
         Assert.Equal(2, Wacto.Requests.Count);
-        Assert.All(Wacto.Requests, r => Assert.Equal("910000000999", r.Json.GetProperty("to").GetString()));
-        Assert.Equal(["amc_yearly_reminder", "amc_monthly_reminder"],
+        Assert.All(Wacto.Requests, r =>
+        {
+            Assert.Equal("910000000999", r.Json.GetProperty("to").GetString());
+            Assert.Equal("test", r.Json.GetProperty("biz_opaque_callback_data").GetString());
+            var parameters = r.Json.GetProperty("template").GetProperty("components")[0].GetProperty("parameters")
+                .EnumerateArray().Select(p => p.GetProperty("text").GetString()!).ToArray();
+            Assert.Equal(["Test Customer", "Test Project", "20 Dec 2026"], parameters); // today + 30 days
+        });
+        Assert.Equal(["amc_template", "monthly_template"],
             Wacto.Requests.Select(r => r.Json.GetProperty("template").GetProperty("name").GetString()!).ToArray());
         Assert.Equal(0, await _api.WithDbAsync(db => db.Reminders.CountAsync()));
+    }
+
+    [Fact]
+    public async Task Test_send_still_reads_the_old_query_for_this_release_and_the_body_wins()
+    {
+        var c = await At(Day);
+        _api.Reminders.TestPhone = "+910000000999";
+
+        await c.PostAsync("/api/reminders/test-send?planType=Monthly", null);
+        await c.PostAsJsonAsync("/api/reminders/test-send?planType=Monthly", new { planType = "AMC" });
+
+        Assert.Equal(["monthly_template", "amc_template"],
+            Wacto.Requests.Select(r => r.Json.GetProperty("template").GetProperty("name").GetString()!).ToArray());
+    }
+
+    [Fact]
+    public async Task Test_send_is_409_provider_not_configured_with_the_fake_provider()
+    {
+        var c = await At(Day);
+        _api.Reminders.TestPhone = "+910000000999";
+        _api.UseWacto = false; // WhatsApp:Provider = Fake
+
+        var res = await c.PostAsJsonAsync("/api/reminders/test-send", new { planType = "AMC" });
+
+        Assert.Equal(HttpStatusCode.Conflict, res.StatusCode);
+        Assert.Equal("provider_not_configured", await res.ErrorCode());
+        Assert.Empty(_api.Whatsapp.Calls);
+        Assert.Empty(Wacto.Requests);
     }
 
     [Fact]
@@ -302,6 +373,7 @@ public class WactoReminderTests : IAsyncLifetime
 
         var body = await (await c.PostAsync("/api/reminders/test-send", null)).Json();
         Assert.False(body.GetProperty("success").GetBoolean());
+        Assert.Equal(401, body.GetProperty("httpStatus").GetInt32());
         Assert.Equal("HTTP 401: Invalid OAuth access token", body.GetProperty("errorMessage").GetString());
     }
 
@@ -341,6 +413,8 @@ public class WactoReminderTests : IAsyncLifetime
         Assert.DoesNotContain("Bearer ", log);
         Assert.DoesNotContain("pnid-123", log);
         Assert.DoesNotContain("Logged Co", log);
+        Assert.DoesNotContain("messaging_product", log); // no request body
+        Assert.DoesNotContain("wamid.TEST1", log); // no response body
         // The stored error is scrubbed of the token too.
         var stored = await _api.WithDbAsync(db => db.Reminders.Where(r => r.PlanId == failing).Select(r => r.ErrorMessage).SingleAsync());
         Assert.DoesNotContain(ApiFixture.WactoToken, stored);

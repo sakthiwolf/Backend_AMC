@@ -5,4 +5,5 @@ obj/
 appsettings.*.local.json
 logs/
 publish/
+publish_new/
 TestResults/

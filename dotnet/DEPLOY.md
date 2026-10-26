@@ -20,15 +20,17 @@ Production settings are environment variables (see README). Never commit them. C
    ConnectionStrings__Default=Server=<host>,<port>;Database=<db>;User Id=<user>;Password=<password>;TrustServerCertificate=True;Encrypt=True
    Jwt__Secret=<32+ random characters>
    WhatsApp__Provider=Wacto
-   WhatsApp__BaseUrl=<from the Wacto console, https://...>
-   WhatsApp__ApiVersion=<from the Wacto console>
+   WhatsApp__BaseUrl=https://my.wacto.app
+   WhatsApp__ApiVersion=v21.0
    WhatsApp__PhoneNumberId=<from the Wacto console>
    WhatsApp__Token=<from the Wacto console>
+   WhatsApp__AuthHeaderName=Authorization
+   WhatsApp__AuthScheme=Bearer
    Reminders__Enabled=false
    Reminders__TestPhoneOnly=true
    Reminders__TestPhone=<your own number, E.164>
    ```
-   With `WhatsApp__Provider=Wacto` (also the default) the API will not start until the four WhatsApp values are set. Use `WhatsApp__Provider=Fake` to run without WhatsApp. Turn `Reminders__Enabled` on, and later `Reminders__TestPhoneOnly` off, only after `POST /api/reminders/test-send` works.
+   With `WhatsApp__Provider=Wacto` (also the default) the API will not start until `WhatsApp__PhoneNumberId` and `WhatsApp__Token` are set (BaseUrl and ApiVersion default to the values above). Use `WhatsApp__Provider=Fake` to run without WhatsApp. Turn `Reminders__Enabled` on, and later `Reminders__TestPhoneOnly` off, only after `POST /api/reminders/test-send` works.
 5. **systemd** `/etc/systemd/system/amc-api.service`:
    ```ini
    [Unit]

@@ -123,19 +123,28 @@ public class ReminderService(
 
     /// <summary>
     /// Admin check of the WhatsApp set-up: sends the template for <paramref name="planType"/> once to
-    /// Reminders:TestPhone with sample values. Stores nothing.
+    /// Reminders:TestPhone with sample values and callback data <see cref="TestCallbackData"/>. Stores nothing.
     /// </summary>
     public async Task<TestSendResultDto> TestSendAsync(PlanType planType, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(_opt.TestPhone))
             throw AppException.Conflict("test_phone_not_set", "Reminders:TestPhone is not set, so there is nowhere to send a test.");
+        if (sender.IsFake)
+            throw AppException.Conflict("provider_not_configured",
+                "WhatsApp:Provider is Fake, so a test send would not reach WhatsApp.");
 
-        string[] parameters = ["Sample Customer", "Sample Project", FormatDate(clock.Today.AddYears(1))];
-        var result = await SafeSendAsync(_opt.TestPhone, _templates.For(planType), parameters, ct);
+        string[] parameters = ["Test Customer", "Test Project", FormatDate(clock.Today.AddDays(30))];
+        var result = await SafeSendAsync(_opt.TestPhone, _templates.For(planType), parameters, TestCallbackData, ct);
         logger.LogInformation("Test send ({PlanType}): {Outcome}, HTTP {Status}, {DurationMs} ms.",
             planType, result.Success ? "sent" : "failed", result.HttpStatus, Ms(result.Duration));
-        return new TestSendResultDto(result.Success, result.ProviderMessageId, result.ErrorMessage);
+        return new TestSendResultDto(result.Success, result.ProviderMessageId, result.HttpStatus, result.ErrorMessage);
     }
+
+    /// <summary>biz_opaque_callback_data of the admin test send (a real reminder sends its ReminderId).</summary>
+    public const string TestCallbackData = "test";
+
+    /// <summary>Template parameter 2 when the customer has no project name.</summary>
+    public const string NoProjectName = "your project";
 
     /// <summary>The EndDate as the template shows it: "12 Sep 2027".</summary>
     public static string FormatDate(DateOnly date) => date.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
@@ -158,11 +167,13 @@ public class ReminderService(
         string[] parameters =
         [
             customer.CustomerName,
-            string.IsNullOrWhiteSpace(customer.ProjectName) ? "-" : customer.ProjectName,
+            string.IsNullOrWhiteSpace(customer.ProjectName) ? NoProjectName : customer.ProjectName,
             FormatDate(plan.EndDate),
         ];
 
-        var result = await SafeSendAsync(to, _templates.For(plan.PlanType), parameters, ct);
+        // The row is saved before sending, so its id exists; only the id goes to the provider.
+        var result = await SafeSendAsync(to, _templates.For(plan.PlanType), parameters,
+            reminder.ReminderId.ToString(CultureInfo.InvariantCulture), ct);
 
         reminder.Attempts++;
         reminder.IsTest = toTestPhone;
@@ -195,11 +206,11 @@ public class ReminderService(
     }
 
     private async Task<WhatsAppSendResult> SafeSendAsync(
-        string to, string template, IReadOnlyList<string> parameters, CancellationToken ct)
+        string to, string template, IReadOnlyList<string> parameters, string callbackData, CancellationToken ct)
     {
         try
         {
-            return await sender.SendTemplateAsync(to, template, parameters, ct);
+            return await sender.SendTemplateAsync(to, template, parameters, callbackData, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

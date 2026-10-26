@@ -161,11 +161,19 @@ public record WhatsAppSendResult(
 /// <summary>Sends an approved WhatsApp template. Implementations never log phone numbers or message bodies.</summary>
 public interface IWhatsAppSender
 {
+    /// <summary>True for the in-memory sender (WhatsApp:Provider "Fake"), which never contacts WhatsApp.</summary>
+    bool IsFake { get; }
+
     /// <param name="phone">E.164 recipient, e.g. +919876543210.</param>
     /// <param name="templateName">The approved template (configuration, not code).</param>
     /// <param name="parameters">Body parameters, in template order.</param>
+    /// <param name="callbackData">
+    /// Sent as biz_opaque_callback_data: the ReminderId, or "test" for the admin test send. Never a phone
+    /// number, name or amount.
+    /// </param>
     Task<WhatsAppSendResult> SendTemplateAsync(
-        string phone, string templateName, IReadOnlyList<string> parameters, CancellationToken ct = default);
+        string phone, string templateName, IReadOnlyList<string> parameters, string callbackData,
+        CancellationToken ct = default);
 }
 
 public interface IPasswordHasher
