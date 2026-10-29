@@ -456,6 +456,46 @@ public class ReminderServiceTests
     }
 
     [Fact]
+    public async Task Test_send_to_a_given_number_goes_there_even_without_a_test_phone_and_logs_it_masked()
+    {
+        _options.TestPhone = "";
+
+        var result = await Service().TestSendAsync(PlanType.Monthly, " +91 90000-12345 ");
+
+        Assert.True(result.Success);
+        await _sender.Received(1).SendTemplateAsync("+919000012345", "monthly_template",
+            Arg.Any<IReadOnlyList<string>>(), "test", Arg.Any<CancellationToken>());
+        Assert.DoesNotContain(_log.Lines, l => l.Contains("9000012345"));
+        Assert.Contains(_log.Lines, l => l.Contains("ending 2345")); // last four digits only
+        Assert.DoesNotContain(_log.Lines, l => l.Contains("+91"));
+        await _reminders.DidNotReceiveWithAnyArgs().TryAddAsync(default!, default);
+    }
+
+    [Theory]
+    [InlineData(" 90000 12345 ")]
+    [InlineData("9000012345")]
+    [InlineData("+919000012345")]
+    public async Task Test_send_takes_a_10_digit_indian_mobile_as_plus_91(string phone)
+    {
+        await Service().TestSendAsync(PlanType.AMC, phone);
+        await _sender.Received(1).SendTemplateAsync("+919000012345", Arg.Any<string>(),
+            Arg.Any<IReadOnlyList<string>>(), "test", Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("12345")]           // too short
+    [InlineData("1234567890")]      // 10 digits but not a mobile number (starts with 1)
+    [InlineData("+91 abc")]
+    [InlineData("+0919000012345")]
+    public async Task Test_send_to_a_bad_number_is_422_invalid_phone_and_sends_nothing(string phone)
+    {
+        var ex = await Assert.ThrowsAsync<AppException>(() => Service().TestSendAsync(PlanType.AMC, phone));
+
+        Assert.Equal((422, "phone", "invalid_phone"), (ex.StatusCode, ex.Details![0].Field, ex.Details[0].Code));
+        await _sender.DidNotReceiveWithAnyArgs().SendTemplateAsync(default!, default!, default!, default!, default);
+    }
+
+    [Fact]
     public async Task Test_send_returns_the_http_status()
     {
         _options.TestPhone = "+910000000999";

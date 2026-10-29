@@ -337,6 +337,26 @@ public class WactoReminderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Test_send_goes_to_the_number_in_the_body_and_stores_nothing()
+    {
+        var c = await At(Day);
+        _api.Reminders.TestPhone = ""; // not needed when the body names a number
+
+        var res = await c.PostAsJsonAsync("/api/reminders/test-send", new { planType = "Monthly", phone = "+910000000777" });
+        var plain = await c.PostAsJsonAsync("/api/reminders/test-send", new { planType = "AMC", phone = "9000000777" });
+        var bad = await c.PostAsJsonAsync("/api/reminders/test-send", new { planType = "Monthly", phone = "0000000777" });
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, plain.StatusCode);
+        Assert.Equal(2, Wacto.Requests.Count);
+        Assert.Equal("910000000777", Wacto.Requests[0].Json.GetProperty("to").GetString());
+        Assert.Equal("monthly_template", Wacto.Requests[0].Json.GetProperty("template").GetProperty("name").GetString());
+        Assert.Equal("919000000777", Wacto.Requests[1].Json.GetProperty("to").GetString()); // 10 digits: +91 added
+        Assert.Equal((HttpStatusCode)422, bad.StatusCode);
+        Assert.Equal(0, await _api.WithDbAsync(db => db.Reminders.CountAsync()));
+    }
+
+    [Fact]
     public async Task Test_send_still_reads_the_old_query_for_this_release_and_the_body_wins()
     {
         var c = await At(Day);

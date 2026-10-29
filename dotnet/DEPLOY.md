@@ -88,6 +88,19 @@ Production settings are environment variables (see README). Never commit them. C
 7. Firewall: open 443 only; do not expose 1433 or the app port.
 8. Check `https://api.<company-domain>/api/health`. If it fails, read `logs\stdout*` and `logs\amc-api-*.log`.
 
+## WhatsApp (Wacto) go-live
+
+Settings can come from environment variables (section A step 4) **or** from `appsettings.Production.local.json` placed next to `AmcTracker.Api.dll`. That file is git-ignored and `dotnet publish` never includes it, so copy it to the server by hand (Linux: `chown` to the service user, `chmod 600`; IIS: readable by the app pool only). Environment variables win over the file.
+
+1. **Stage 1: test phone only.** `WhatsApp:Provider=Wacto`, `PhoneNumberId`, `Token`; `Reminders:Enabled=false`, `Reminders:TestPhoneOnly=true`, `Reminders:TestPhone=<your own number, E.164>`, `Reminders:AdminUsernames=["<your username>"]`. Restart the API.
+2. **Test send.** Sign in as that user and call `POST /api/reminders/test-send` with `{"planType":"AMC"}`, then `{"planType":"Monthly"}`. Expect `success: true` and a `providerMessageId`, and the message on your phone.
+   - `httpStatus` 401 or 403: the auth header is wrong. Try `AuthHeaderName=apikey`, `AuthScheme=""` (the raw key), restart, test again.
+   - 400 with a template error: the template name or language does not match Wacto.
+3. **Stage 2: the daily job, still to the test phone.** `Reminders:Enabled=true`. Each morning at 09:00 IST every due reminder goes to your test phone (rows marked `IsTest`). Watch it for a day or two in the app's Reminders tab.
+4. **Stage 3: customers.** `Reminders:TestPhoneOnly=false`. From the next run, customers receive their reminders.
+
+To stop all sends at once: `Reminders:Enabled=false` (or `WhatsApp:Provider=Fake`) and restart.
+
 ## Applying migrations
 
 Pick one:

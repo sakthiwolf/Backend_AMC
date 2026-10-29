@@ -9,11 +9,27 @@ using AmcTracker.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration.Json;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// appsettings.{Environment}.local.json (git-ignored, never published): settings for one machine, such as the
+// Wacto key. It sits right after appsettings.{Environment}.json, so user secrets and environment variables win.
+var environmentJson = $"appsettings.{builder.Environment.EnvironmentName}.json";
+var configSources = builder.Configuration.Sources;
+var afterJson = configSources.ToList().FindLastIndex(s => s is JsonConfigurationSource j
+    && (j.Path == environmentJson || j.Path == "appsettings.json")) + 1;
+configSources.Insert(afterJson, new JsonConfigurationSource
+{
+    Path = $"appsettings.{builder.Environment.EnvironmentName}.local.json",
+    Optional = true,
+    ReloadOnChange = true,
+    FileProvider = builder.Environment.ContentRootFileProvider,
+});
+
 builder.Host.UseSerilog((ctx, lc) => lc.ReadFrom.Configuration(ctx.Configuration));
 
 var jwt = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();

@@ -66,7 +66,7 @@ Schema changes go through EF migrations only. Never edit tables by hand in produ
 
 With `WhatsApp__Provider=Wacto` (the default outside Development) the API **refuses to start** if `PhoneNumberId` or `Token` is missing; the error names the missing keys. Set `WhatsApp__Provider=Fake` on a server that should not send at all.
 
-The auth header (`AuthHeaderName`/`AuthScheme`) and Wacto's response shape are not yet confirmed with Wacto; the sender reads the Meta shape (`messages[0].id`, `error.code`/`error.message`) and stores anything else as text.
+Confirmed with Wacto on 2026-10-26 (a real Monthly test send and reminder run to the test phone): `Authorization: Bearer <key>` works and a success returns the Meta shape with `messages[0].id` (a `wamid...` id). Error bodies are read as Meta's `error.code`/`error.message`; anything else is stored as text.
 
 ### Local development secrets (dotnet user-secrets)
 

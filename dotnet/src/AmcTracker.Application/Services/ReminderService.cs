@@ -5,6 +5,7 @@ using AmcTracker.Application.Dtos;
 using AmcTracker.Application.Options;
 using AmcTracker.Domain.Entities;
 using AmcTracker.Domain.Enums;
+using AmcTracker.Domain.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -122,21 +123,37 @@ public class ReminderService(
     }
 
     /// <summary>
-    /// Admin check of the WhatsApp set-up: sends the template for <paramref name="planType"/> once to
-    /// Reminders:TestPhone with sample values and callback data <see cref="TestCallbackData"/>. Stores nothing.
+    /// Admin check of the WhatsApp set-up: sends the template for <paramref name="planType"/> once, with sample
+    /// values and callback data <see cref="TestCallbackData"/>, to <paramref name="phone"/> when given (E.164),
+    /// otherwise to Reminders:TestPhone. Stores nothing. 422 for a bad number, 409 when there is no number at all.
     /// </summary>
-    public async Task<TestSendResultDto> TestSendAsync(PlanType planType, CancellationToken ct = default)
+    public async Task<TestSendResultDto> TestSendAsync(PlanType planType, string? phone = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(_opt.TestPhone))
-            throw AppException.Conflict("test_phone_not_set", "Reminders:TestPhone is not set, so there is nowhere to send a test.");
+        string to;
+        if (!string.IsNullOrWhiteSpace(phone))
+        {
+            to = PhoneNumber.Normalize(phone.Trim());
+            // A plain 10-digit Indian mobile number (starts with 6 to 9) is taken as +91.
+            if (to.Length == 10 && to[0] is >= '6' and <= '9' && to.All(char.IsAsciiDigit)) to = "+91" + to;
+            if (!PhoneNumber.IsValidE164(to))
+                throw AppException.ValidationFailed([new FieldError("phone",
+                    "Use a 10-digit mobile number or the full number with country code, e.g. +919876543210.",
+                    "invalid_phone")]);
+        }
+        else if (string.IsNullOrWhiteSpace(_opt.TestPhone))
+            throw AppException.Conflict("test_phone_not_set",
+                "Give a phone number, or set Reminders:TestPhone, so there is somewhere to send the test.");
+        else
+            to = _opt.TestPhone;
         if (sender.IsFake)
             throw AppException.Conflict("provider_not_configured",
                 "WhatsApp:Provider is Fake, so a test send would not reach WhatsApp.");
 
         string[] parameters = ["Test Customer", "Test Project", FormatDate(clock.Today.AddDays(30))];
-        var result = await SafeSendAsync(_opt.TestPhone, _templates.For(planType), parameters, TestCallbackData, ct);
-        logger.LogInformation("Test send ({PlanType}): {Outcome}, HTTP {Status}, {DurationMs} ms.",
-            planType, result.Success ? "sent" : "failed", result.HttpStatus, Ms(result.Duration));
+        var result = await SafeSendAsync(to, _templates.For(planType), parameters, TestCallbackData, ct);
+        // Only the last four digits: never the country code or the full number.
+        logger.LogInformation("Test send ({PlanType}) to a number ending {Last4}: {Outcome}, HTTP {Status}, {DurationMs} ms.",
+            planType, to[^4..], result.Success ? "sent" : "failed", result.HttpStatus, Ms(result.Duration));
         return new TestSendResultDto(result.Success, result.ProviderMessageId, result.HttpStatus, result.ErrorMessage);
     }
 

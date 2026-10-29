@@ -152,8 +152,11 @@ public record ReminderDto(
 /// <summary>Result of POST /api/reminders/test-send. Nothing is stored.</summary>
 public record TestSendResultDto(bool Success, string? ProviderMessageId, int? HttpStatus, string? ErrorMessage);
 
-/// <summary>Body of POST /api/reminders/test-send. Optional: no body means AMC.</summary>
-public record TestSendRequest(PlanType? PlanType);
+/// <summary>
+/// Body of POST /api/reminders/test-send. Optional: no body means AMC to Reminders:TestPhone. Phone (E.164) sends
+/// the one test message to that number instead.
+/// </summary>
+public record TestSendRequest(PlanType? PlanType, string? Phone = null);
 
 public record ReminderRunResult(int Processed, int Sent, int Failed, int Skipped);
 
