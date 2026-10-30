@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Serialization;
 using AmcTracker.Api.Infrastructure;
 using AmcTracker.Application;
@@ -7,6 +8,8 @@ using AmcTracker.Infrastructure;
 using AmcTracker.Infrastructure.Persistence;
 using AmcTracker.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration.Json;
@@ -182,6 +185,25 @@ if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
 }
 
 await SeedUser.RunAsync(app);
+
+// Local runs through the launch profile: open Swagger in the default browser once the API is listening.
+// launchBrowser in launchSettings.json is not honoured by `dotnet run`, so this is done here.
+if (app.Environment.IsDevelopment() && app.Configuration.GetValue<bool>("Swagger:OpenBrowserOnStart"))
+{
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        try
+        {
+            var address = app.Services.GetRequiredService<IServer>().Features
+                .Get<IServerAddressesFeature>()!.Addresses.First();
+            Process.Start(new ProcessStartInfo($"{address}/swagger") { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning(ex, "Could not open the browser.");
+        }
+    });
+}
 
 // Warm-up: build the EF model, open the SQL connection pool and JIT the password hasher once at
 // start, so the first login after an IIS app-pool start or recycle is not several seconds slower.
