@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Serialization;
 using AmcTracker.Api.Infrastructure;
 using AmcTracker.Application;
@@ -7,13 +8,31 @@ using AmcTracker.Infrastructure;
 using AmcTracker.Infrastructure.Persistence;
 using AmcTracker.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration.Json;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// appsettings.{Environment}.local.json (git-ignored, never published): settings for one machine, such as the
+// Wacto key. It sits right after appsettings.{Environment}.json, so user secrets and environment variables win.
+var environmentJson = $"appsettings.{builder.Environment.EnvironmentName}.json";
+var configSources = builder.Configuration.Sources;
+var afterJson = configSources.ToList().FindLastIndex(s => s is JsonConfigurationSource j
+    && (j.Path == environmentJson || j.Path == "appsettings.json")) + 1;
+configSources.Insert(afterJson, new JsonConfigurationSource
+{
+    Path = $"appsettings.{builder.Environment.EnvironmentName}.local.json",
+    Optional = true,
+    ReloadOnChange = true,
+    FileProvider = builder.Environment.ContentRootFileProvider,
+});
+
 builder.Host.UseSerilog((ctx, lc) => lc.ReadFrom.Configuration(ctx.Configuration));
 
 var jwt = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
@@ -120,6 +139,11 @@ builder.Services.AddSwaggerGen(o =>
 
 var app = builder.Build();
 
+// Reminders:TestMode was renamed Reminders:TestPhoneOnly; the old key is read for one release.
+if (app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AmcTracker.Application.Options.ReminderOptions>>()
+        .Value.UsedDeprecatedTestMode)
+    app.Logger.LogWarning("Reminders:TestMode is deprecated and will be removed; use Reminders:TestPhoneOnly.");
+
 // CLI mode: `create-user <username> [full name]` instead of starting the server.
 if (args.Length > 0 && args[0] == "create-user")
 {
@@ -161,6 +185,25 @@ if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
 }
 
 await SeedUser.RunAsync(app);
+
+// Local runs through the launch profile: open Swagger in the default browser once the API is listening.
+// launchBrowser in launchSettings.json is not honoured by `dotnet run`, so this is done here.
+if (app.Environment.IsDevelopment() && app.Configuration.GetValue<bool>("Swagger:OpenBrowserOnStart"))
+{
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        try
+        {
+            var address = app.Services.GetRequiredService<IServer>().Features
+                .Get<IServerAddressesFeature>()!.Addresses.First();
+            Process.Start(new ProcessStartInfo($"{address}/swagger") { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning(ex, "Could not open the browser.");
+        }
+    });
+}
 
 // Warm-up: build the EF model, open the SQL connection pool and JIT the password hasher once at
 // start, so the first login after an IIS app-pool start or recycle is not several seconds slower.

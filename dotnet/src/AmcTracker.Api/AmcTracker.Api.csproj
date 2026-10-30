@@ -24,9 +24,17 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Local development secrets (ConnectionStrings:Default, Jwt:Secret): dotnet user-secrets, see README. -->
+    <UserSecretsId>2a4397f9-233b-41e4-bb1d-36a55502dc65</UserSecretsId>
     <!-- Keep publish output small: English resources only, no debug symbols. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Machine-only settings (e.g. the Wacto key) are git-ignored and never go into a publish folder or zip;
+         copy them to the server by hand. -->
+    <Content Update="appsettings.*.local.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugType>none</DebugType>

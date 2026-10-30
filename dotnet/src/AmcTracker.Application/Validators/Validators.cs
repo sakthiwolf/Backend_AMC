@@ -69,6 +69,12 @@ public abstract class CustomerFieldsValidator<T> : AbstractValidator<T> where T 
             .Must(v => v is null || v >= 0).WithMessage("Amount cannot be negative.")
             .Must(v => v is null || v < 10_000_000_000m).WithMessage("Amount is too large.")
             .Must(v => v is null || decimal.Round(v.Value, 2) == v).WithMessage("Amount can have at most 2 decimals.");
+
+        RuleFor(x => x.TotalProjectValue).Cascade(CascadeMode.Stop)
+            .Must(v => v is null || v >= 0).WithMessage("Total project value cannot be negative.")
+            .Must(v => v is null || v < 10_000_000_000m).WithMessage("Total project value is too large.")
+            .Must(v => v is null || decimal.Round(v.Value, 2) == v)
+                .WithMessage("Total project value can have at most 2 decimals.");
     }
 }
 

@@ -35,6 +35,8 @@ public interface ICustomerFields
     bool? WhatsAppOptOut { get; }
     /// <summary>"AMC" (yearly) or "Monthly". Omitted means AMC on create and "unchanged" on update.</summary>
     PlanType? PlanType { get; }
+    /// <summary>The whole project's value, stored exactly as entered. Separate from the plan amount; never used in any calculation.</summary>
+    decimal? TotalProjectValue { get; }
 }
 
 /// <summary>Body for POST /api/customers.</summary>
@@ -46,7 +48,8 @@ public record CreateCustomerRequest(
     string? ProjectName,
     decimal? ProjectValue,
     bool? WhatsAppOptOut,
-    PlanType? PlanType = null) : ICustomerFields;
+    PlanType? PlanType = null,
+    decimal? TotalProjectValue = null) : ICustomerFields;
 
 /// <summary>Body for PUT /api/customers/{id}. Same fields as create; IsActive is changed only by DELETE.</summary>
 public record UpdateCustomerRequest(
@@ -57,7 +60,8 @@ public record UpdateCustomerRequest(
     string? ProjectName,
     decimal? ProjectValue,
     bool? WhatsAppOptOut,
-    PlanType? PlanType = null) : ICustomerFields;
+    PlanType? PlanType = null,
+    decimal? TotalProjectValue = null) : ICustomerFields;
 
 /// <summary>One page of a list: { items, page, pageSize, totalCount }.</summary>
 public record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSize, int TotalCount);
@@ -78,7 +82,9 @@ public record CustomerDto(
     /// <summary>Calculated: when the plan ends.</summary>
     DateOnly? PlanEndDate,
     /// <summary>Calculated: the next WhatsApp reminder date.</summary>
-    DateOnly? ReminderDate);
+    DateOnly? ReminderDate,
+    /// <summary>The whole project's value as entered; null when not given.</summary>
+    decimal? TotalProjectValue = null);
 
 // ---- Plans ----
 /// <summary>Body for POST /api/customers/{id}/plans. StartDate defaults to the customer's installation date.</summary>
@@ -139,7 +145,18 @@ public record ReminderDto(
     int Attempts,
     string? ErrorMessage,
     /// <summary>Failed, attempts left, and the plan still current: staff may press "Try again".</summary>
-    bool CanRetry);
+    bool CanRetry,
+    /// <summary>Sent to the test phone, not the customer.</summary>
+    bool IsTest = false);
+
+/// <summary>Result of POST /api/reminders/test-send. Nothing is stored.</summary>
+public record TestSendResultDto(bool Success, string? ProviderMessageId, int? HttpStatus, string? ErrorMessage);
+
+/// <summary>
+/// Body of POST /api/reminders/test-send. Optional: no body means AMC to Reminders:TestPhone. Phone (E.164) sends
+/// the one test message to that number instead.
+/// </summary>
+public record TestSendRequest(PlanType? PlanType, string? Phone = null);
 
 public record ReminderRunResult(int Processed, int Sent, int Failed, int Skipped);
 

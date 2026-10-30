@@ -57,10 +57,12 @@ public interface IPlanRepository
     Task<(List<Plan> Items, int TotalCount)> PageAsync(
         PlanFilter filter, DateOnly today, int page, int pageSize, CancellationToken ct = default);
     /// <summary>
-    /// Plans whose reminder goes out on <paramref name="today"/>: ReminderDate is today, not renewed, and the
-    /// customer is active and has not opted out. Loaded with their customers.
+    /// Plans whose reminder should go out now: ReminderDate between <paramref name="from"/> and
+    /// <paramref name="today"/> (the catch-up window), not renewed, not ended, the customer active and not opted
+    /// out. Skips a plan created (IST date) after its ReminderDate and a plan that already has a Sent reminder.
+    /// Loaded with their customers.
     /// </summary>
-    Task<List<Plan>> ListRemindersDueAsync(DateOnly today, CancellationToken ct = default);
+    Task<List<Plan>> ListRemindersDueAsync(DateOnly from, DateOnly today, CancellationToken ct = default);
     void Add(Plan plan);
 }
 
@@ -134,16 +136,44 @@ public interface IUserRepository
     void AddDevice(UserDevice device);
 }
 
-public record WhatsAppSendResult(bool Success, string? Error = null);
+/// <summary>
+/// The outcome of one WhatsApp send. <see cref="ErrorMessage"/> is at most 500 characters and never holds a token.
+/// <see cref="IsRetryable"/> is false for a request the provider refused (4xx other than 429): trying again
+/// would fail the same way. <see cref="HttpStatus"/> and <see cref="Duration"/> are for logging only.
+/// </summary>
+public record WhatsAppSendResult(
+    bool Success,
+    string? ProviderMessageId = null,
+    string? ErrorCode = null,
+    string? ErrorMessage = null,
+    bool IsRetryable = true,
+    int? HttpStatus = null,
+    TimeSpan? Duration = null)
+{
+    public const int MaxErrorLength = 500;
+
+    public static WhatsAppSendResult Failed(string message, bool retryable, string? code = null,
+        int? httpStatus = null, TimeSpan? duration = null) =>
+        new(false, null, code, message.Length <= MaxErrorLength ? message : message[..MaxErrorLength],
+            retryable, httpStatus, duration);
+}
 
 /// <summary>Sends an approved WhatsApp template. Implementations never log phone numbers or message bodies.</summary>
 public interface IWhatsAppSender
 {
+    /// <summary>True for the in-memory sender (WhatsApp:Provider "Fake"), which never contacts WhatsApp.</summary>
+    bool IsFake { get; }
+
     /// <param name="phone">E.164 recipient, e.g. +919876543210.</param>
     /// <param name="templateName">The approved template (configuration, not code).</param>
     /// <param name="parameters">Body parameters, in template order.</param>
+    /// <param name="callbackData">
+    /// Sent as biz_opaque_callback_data: the ReminderId, or "test" for the admin test send. Never a phone
+    /// number, name or amount.
+    /// </param>
     Task<WhatsAppSendResult> SendTemplateAsync(
-        string phone, string templateName, IReadOnlyList<string> parameters, CancellationToken ct = default);
+        string phone, string templateName, IReadOnlyList<string> parameters, string callbackData,
+        CancellationToken ct = default);
 }
 
 public interface IPasswordHasher

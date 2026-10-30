@@ -14,12 +14,13 @@ public static class Mappings
     public static CustomerDto ToDto(this Customer c) => new(
         c.CustomerId, c.CustomerName, c.Phone, c.Location, c.InstallationDate,
         c.ProjectName, c.ProjectValue is { } v ? Money(v) : null,
-        c.WhatsAppOptOut, c.IsActive, c.CreatedAt, c.UpdatedAt, c.PlanType, c.PlanEndDate, c.ReminderDate);
+        c.WhatsAppOptOut, c.IsActive, c.CreatedAt, c.UpdatedAt, c.PlanType, c.PlanEndDate, c.ReminderDate,
+        c.TotalProjectValue is { } t ? Money(t) : null);
 
     /// <summary>Needs the reminder's plan (with its renewal) loaded for <see cref="ReminderDto.CanRetry"/>.</summary>
     public static ReminderDto ToDto(this Reminder r, DateOnly today) => new(
         r.ReminderId, r.PlanId, r.ScheduledDate, r.SentAt, r.Channel, r.Status, r.Attempts, r.ErrorMessage,
-        r.CanRetry(today));
+        r.CanRetry(today), r.IsTest);
 
     public static PaymentDto ToDto(this Payment p) => new(
         p.PaymentId, p.PlanId, p.PaidOn, Money(p.Amount), p.Mode, p.Note, p.CreatedAt);

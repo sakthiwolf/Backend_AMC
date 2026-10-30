@@ -13,6 +13,8 @@ public class Customer
     public DateOnly InstallationDate { get; set; }
     public string? ProjectName { get; set; }
     public decimal? ProjectValue { get; set; }
+    /// <summary>The whole project's value, as entered. Separate from the plan amount (ProjectValue); never calculated from it.</summary>
+    public decimal? TotalProjectValue { get; set; }
     /// <summary>AMC or Monthly: the type of the plan created with the customer (see PlanScheduleCalculator).</summary>
     public PlanType PlanType { get; set; } = PlanType.AMC;
     /// <summary>When the current plan ends (from its type and start date). Calculated, never typed.</summary>

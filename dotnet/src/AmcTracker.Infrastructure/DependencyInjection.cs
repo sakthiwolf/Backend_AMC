@@ -14,9 +14,12 @@ public static class DependencyInjection
     public const string ConnectionName = "Default";
 
     /// <param name="isDevelopment">
-    /// Development: reminders run in test mode (only Reminders:TestPhone is ever messaged) and WhatsApp uses
-    /// the in-memory fake unless WhatsApp:UseFake is set to false.
+    /// Development: reminders only ever go to Reminders:TestPhone, and WhatsApp:Provider defaults to "Fake".
     /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// WhatsApp:Provider is "Wacto" and a required WhatsApp key is empty (the message names the key, never a
+    /// value), or the provider name is unknown.
+    /// </exception>
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services, IConfiguration config, bool isDevelopment = false)
     {
@@ -41,7 +44,20 @@ public static class DependencyInjection
         services.Configure<WhatsAppOptions>(config.GetSection(WhatsAppOptions.Section));
         services.Configure<ReminderJobOptions>(config.GetSection(ReminderJobOptions.Section));
         services.Configure<ReminderOptions>(config.GetSection(ReminderOptions.Section));
-        if (isDevelopment) services.PostConfigure<ReminderOptions>(o => o.TestMode = true);
+        services.Configure<WhatsAppTemplateOptions>(config.GetSection(WhatsAppTemplateOptions.Section));
+        // Reminders:TestMode is the old name of Reminders:TestPhoneOnly: read it for one release.
+        var reminders = config.GetSection(ReminderOptions.Section);
+        var legacyTestMode = reminders.GetValue<bool?>("TestMode");
+        var useLegacy = reminders["TestPhoneOnly"] is null && legacyTestMode is not null;
+        services.PostConfigure<ReminderOptions>(o =>
+        {
+            if (useLegacy)
+            {
+                o.TestPhoneOnly = legacyTestMode!.Value;
+                o.UsedDeprecatedTestMode = true;
+            }
+            if (isDevelopment) o.TestPhoneOnly = true;
+        });
 
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<Application.Abstractions.IPasswordHasher, IdentityPasswordHasher>();
@@ -50,18 +66,33 @@ public static class DependencyInjection
         services.AddSingleton<IReportFileBuilder, PdfReportBuilder>();
 
         var whatsApp = config.GetSection(WhatsAppOptions.Section).Get<WhatsAppOptions>() ?? new WhatsAppOptions();
-        if (whatsApp.UseFake ?? isDevelopment)
+        var provider = string.IsNullOrWhiteSpace(whatsApp.Provider)
+            ? (isDevelopment ? WhatsAppProviders.Fake : WhatsAppProviders.Wacto)
+            : whatsApp.Provider.Trim();
+        if (provider.Equals(WhatsAppProviders.Fake, StringComparison.OrdinalIgnoreCase))
         {
             services.AddSingleton<FakeWhatsAppSender>();
             services.AddSingleton<IWhatsAppSender>(sp => sp.GetRequiredService<FakeWhatsAppSender>());
         }
+        else if (provider.Equals(WhatsAppProviders.Wacto, StringComparison.OrdinalIgnoreCase))
+        {
+            var missing = whatsApp.MissingKeys();
+            if (missing.Count > 0)
+                throw new InvalidOperationException(
+                    $"WhatsApp:Provider is \"{WhatsAppProviders.Wacto}\" but these settings are missing: " +
+                    $"{string.Join(", ", missing)}. Set them as machine variables (e.g. WhatsApp__Token), " +
+                    "or set WhatsApp__Provider=Fake.");
+            services.AddHttpClient<IWhatsAppSender, WhatsAppCloudSender>(http =>
+                {
+                    http.Timeout = whatsApp.Timeout;
+                })
+                // The default HttpClient logs print request URLs; keep provider details out of the logs.
+                .RemoveAllLoggers();
+        }
         else
         {
-            services.AddHttpClient<IWhatsAppSender, WhatsAppCloudSender>(http =>
-            {
-                http.BaseAddress = new Uri(whatsApp.BaseUrl);
-                http.Timeout = TimeSpan.FromSeconds(30);
-            });
+            throw new InvalidOperationException(
+                $"WhatsApp:Provider must be \"{WhatsAppProviders.Wacto}\" or \"{WhatsAppProviders.Fake}\".");
         }
 
         services.AddHostedService<ReminderBackgroundService>();

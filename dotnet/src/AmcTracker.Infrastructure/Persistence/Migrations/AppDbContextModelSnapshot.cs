@@ -76,6 +76,10 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                     b.Property<DateOnly?>("ReminderDate")
                         .HasColumnType("date");
 
+                    b.Property<decimal?>("TotalProjectValue")
+                        .HasPrecision(12, 2)
+                        .HasColumnType("decimal(12,2)");
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
 
@@ -102,6 +106,8 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_Customers_PlanType", "[PlanType] IN ('AMC', 'Monthly')");
 
                             t.HasCheckConstraint("CK_Customers_ProjectValue_NonNegative", "[ProjectValue] IS NULL OR [ProjectValue] >= 0");
+
+                            t.HasCheckConstraint("CK_Customers_TotalProjectValue_NonNegative", "[TotalProjectValue] IS NULL OR [TotalProjectValue] >= 0");
                         });
                 });
 
@@ -232,8 +238,16 @@ namespace AmcTracker.Infrastructure.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<bool>("IsTest")
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<int>("PlanId")
                         .HasColumnType("int");
+
+                    b.Property<string>("ProviderMessageId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<DateOnly>("ScheduledDate")
                         .HasColumnType("date");

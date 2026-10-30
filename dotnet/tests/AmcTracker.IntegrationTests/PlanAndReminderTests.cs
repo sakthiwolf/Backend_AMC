@@ -471,31 +471,33 @@ public class ReminderJobTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Sends_the_template_on_the_reminder_date_and_not_the_day_before_or_after()
+    public async Task Sends_the_template_on_the_reminder_date_not_the_day_before_and_catches_up_a_missed_day()
     {
         var c = await At(Day.AddDays(-1));
         var planId = await Seed(c, Day, "+919000000021");
         Assert.Equal(0, (await c.Run()).GetProperty("processed").GetInt32()); // the day before: nothing
 
         _api.Clock.Fixed = Day;
-        // A plan whose reminder date was yesterday (a run that never happened) is not picked up today.
+        // A plan (created before it) whose reminder date was yesterday: the run that day never happened, so
+        // today's run catches it up (CLAUDE.md 4.5, 3-day catch-up).
         var missed = await Seed(c, Day.AddDays(-1), "+919000000022", "Yesterday Co");
         var run = await c.Run();
-        Assert.Equal((1, 1), (run.GetProperty("processed").GetInt32(), run.GetProperty("sent").GetInt32()));
-        var call = Assert.Single(_api.Whatsapp.Calls);
-        Assert.Equal("+919000000021", call.Phone);
-        Assert.Equal("amc_renewal_reminder", call.TemplateName);
+        Assert.Equal((2, 2), (run.GetProperty("processed").GetInt32(), run.GetProperty("sent").GetInt32()));
+        var call = Assert.Single(_api.Whatsapp.Calls, x => x.Phone == "+919000000021");
+        Assert.Equal("monthly_template", call.TemplateName);
         var end = PlanScheduleCalculator.Calculate(PlanType.Monthly, Plans.StartRemindingOn(PlanType.Monthly, Day)).EndDate;
-        Assert.Equal(["Due Co", "CCTV", end.ToString("dd MMM yyyy", CultureInfo.InvariantCulture)], call.Parameters);
+        Assert.Equal(["Due Co", "CCTV", end.ToString("d MMM yyyy", CultureInfo.InvariantCulture)], call.Parameters);
 
         var row = (await c.Reminders(planId))[0];
         Assert.Equal(("Sent", Day.Iso(), 1), (row.GetProperty("status").GetString(),
             row.GetProperty("scheduledDate").GetString(), row.GetProperty("attempts").GetInt32()));
-        Assert.Equal(0, (await c.Reminders(missed)).GetArrayLength());
+        var caughtUp = (await c.Reminders(missed))[0];
+        Assert.Equal(("Sent", Day.AddDays(-1).Iso()), (caughtUp.GetProperty("status").GetString(),
+            caughtUp.GetProperty("scheduledDate").GetString())); // the row keeps the plan's reminder date
 
         _api.Clock.Fixed = Day.AddDays(1);
-        Assert.Equal(0, (await c.Run()).GetProperty("processed").GetInt32()); // the day after: nothing
-        Assert.Single(_api.Whatsapp.Calls);
+        Assert.Equal(0, (await c.Run()).GetProperty("processed").GetInt32()); // the day after: nothing new
+        Assert.Equal(2, _api.Whatsapp.Calls.Count);
     }
 
     [Fact]
@@ -506,7 +508,8 @@ public class ReminderJobTests : IAsyncLifetime
 
         Assert.Equal(1, (await c.Run()).GetProperty("sent").GetInt32());
         var second = await c.Run();
-        Assert.Equal((0, 1), (second.GetProperty("sent").GetInt32(), second.GetProperty("skipped").GetInt32()));
+        // A plan with a Sent reminder is not even picked up again.
+        Assert.Equal((0, 0), (second.GetProperty("sent").GetInt32(), second.GetProperty("processed").GetInt32()));
         Assert.Single(_api.Whatsapp.Calls);
         Assert.Equal(1, (await c.Reminders(planId)).GetArrayLength());
     }
