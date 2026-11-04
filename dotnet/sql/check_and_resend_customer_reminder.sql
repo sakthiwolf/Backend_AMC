@@ -36,6 +36,7 @@ SELECT c.CustomerId, c.CustomerName, c.ProjectName, c.Phone, c.IsActive, c.Whats
          WHEN c.IsActive = 0 THEN 'NOT SENT: customer is deleted (IsActive = 0)'
          WHEN c.WhatsAppOptOut = 1 THEN 'NOT SENT: customer opted out of WhatsApp'
          WHEN c.Phone NOT LIKE '+%' OR LEN(c.Phone) < 11 THEN 'CHECK: phone is not +<country><number>'
+         WHEN c.Phone LIKE '+91%' AND LEN(c.Phone) <> 13 THEN 'WRONG PHONE: an Indian number is +91 and 10 digits'
          ELSE 'OK'
        END AS CustomerCheck
 FROM Customers c
