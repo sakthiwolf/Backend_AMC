@@ -85,9 +85,10 @@ internal class PlanRepository(AppDbContext db) : IPlanRepository
                 && p.Renewal == null
                 && p.Customer!.IsActive && !p.Customer.WhatsAppOptOut
                 // Catch-up guards: a plan added after its reminder date never sends a late reminder, and a plan
-                // with a Sent reminder is never sent another.
+                // with a Sent reminder is never sent another. A message that only went to the test phone does not
+                // count: the customer has not had it yet.
                 && DateOnly.FromDateTime(p.CreatedAt.AddMinutes(IstOffsetMinutes)) <= p.ReminderDate
-                && !db.Reminders.Any(r => r.PlanId == p.PlanId && r.Status == ReminderStatus.Sent))
+                && !db.Reminders.Any(r => r.PlanId == p.PlanId && r.Status == ReminderStatus.Sent && !r.IsTest))
             .OrderBy(p => p.ReminderDate).ThenBy(p => p.PlanId)
             .ToListAsync(ct);
 

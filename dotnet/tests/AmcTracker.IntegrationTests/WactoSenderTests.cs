@@ -51,6 +51,16 @@ public class WactoSenderTests
     }
 
     [Fact]
+    public async Task The_body_is_sent_with_a_content_length_not_chunked()
+    {
+        await Send(Sender());
+
+        var request = _stub.Requests.Single();
+        Assert.True(request.Headers.TryGetValue("Content-Length", out var length), "no Content-Length header");
+        Assert.Equal(System.Text.Encoding.UTF8.GetByteCount(request.Body).ToString(), length);
+    }
+
+    [Fact]
     public async Task The_body_is_the_Meta_template_format_with_parameters_in_order_and_no_plus()
     {
         await Send(Sender());

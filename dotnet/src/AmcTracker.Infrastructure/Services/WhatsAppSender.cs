@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
 using AmcTracker.Application.Abstractions;
 using Microsoft.Extensions.Options;
@@ -99,7 +98,10 @@ public class WhatsAppCloudSender(HttpClient http, IOptions<WhatsAppOptions> opti
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, _opt.MessagesUri())
             {
-                Content = JsonContent.Create(payload),
+                // A buffered body, so the request carries Content-Length. JsonContent streams it chunked, and
+                // some WhatsApp gateways reject (or read as empty) a chunked request body.
+                Content = new StringContent(JsonSerializer.Serialize(payload), System.Text.Encoding.UTF8,
+                    "application/json"),
             };
             var token = _opt.Token.Trim();
             var scheme = _opt.AuthScheme.Trim();

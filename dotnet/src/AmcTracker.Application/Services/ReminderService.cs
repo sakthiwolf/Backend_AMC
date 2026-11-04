@@ -20,7 +20,7 @@ namespace AmcTracker.Application.Services;
 /// provider says is not retryable uses up the attempts at once, so it is never tried again.</item>
 /// <item>Plans whose ReminderDate is today or in the last <see cref="CatchUpDays"/> days get a Pending row
 /// first. The unique (PlanId, ScheduledDate) key lets only one run insert it, and an existing row is never sent
-/// again.</item>
+/// again, except a row that only went to the test phone: once test mode is off it is sent to the customer.</item>
 /// </list>
 /// Logs carry plan id, reminder id, HTTP status and duration only: never phone numbers, tokens or message text.
 /// </summary>
@@ -70,7 +70,21 @@ public class ReminderService(
         {
             // Sent: never twice. Failed: retried above, or out of attempts. Pending: an earlier run stopped
             // mid-send and the message may have gone out, so it is not sent again.
-            if (await reminders.GetAsync(plan.PlanId, plan.ReminderDate, ct) is not null) { skipped++; continue; }
+            if (await reminders.GetAsync(plan.PlanId, plan.ReminderDate, ct) is { } existing)
+            {
+                // Sent (or failed for good) to the test phone while test mode was on, and test mode is now off:
+                // the customer never got it, so send it to them on the same row.
+                if (existing.IsTest && !_opt.TestPhoneOnly && existing.Status != ReminderStatus.Pending
+                    && await reminders.GetByIdAsync(existing.ReminderId, ct) is { } testRow)
+                {
+                    testRow.Attempts = 0;
+                    if (await SendAsync(testRow, plan, ct)) sent++;
+                    else failed++;
+                    continue;
+                }
+                skipped++;
+                continue;
+            }
 
             var reminder = new Reminder
             {

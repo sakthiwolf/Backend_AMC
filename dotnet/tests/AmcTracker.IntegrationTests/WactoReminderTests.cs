@@ -207,6 +207,30 @@ public class WactoReminderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_reminder_sent_only_to_the_test_phone_goes_to_the_customer_once_test_mode_is_off()
+    {
+        var c = await At(Day);
+        var planId = await Seed(c, Day, "+910000000252");
+        _api.Reminders.TestPhoneOnly = true;
+        _api.Reminders.TestPhone = "+910000000999";
+        await c.Run();
+        Assert.True((await Row(planId))!.IsTest);
+
+        Wacto.Reset();
+        _api.Reminders.TestPhoneOnly = false;
+        await c.Run();
+
+        Assert.Equal("910000000252", Assert.Single(Wacto.Requests).Json.GetProperty("to").GetString());
+        var row = (await Row(planId))!;
+        Assert.Equal((false, ReminderStatus.Sent, 1), (row.IsTest, row.Status, row.Attempts));
+
+        // Sent to the customer now: a third run sends nothing.
+        Wacto.Reset();
+        await c.Run();
+        Assert.Empty(Wacto.Requests);
+    }
+
+    [Fact]
     public async Task Test_phone_only_without_a_test_phone_sends_nothing()
     {
         var c = await At(Day);

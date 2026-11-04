@@ -289,6 +289,8 @@ public sealed class WactoStub : HttpMessageHandler
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         var headers = request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase);
+        // Null when the body would go out chunked.
+        if (request.Content?.Headers.ContentLength is { } length) headers["Content-Length"] = length.ToString();
         var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
         _requests.Enqueue(new WactoRequest(request.Method, request.RequestUri!, headers, body));
         if (Delay is { } delay) await Task.Delay(delay, ct);
