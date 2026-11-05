@@ -34,6 +34,8 @@
     <!-- Machine-only settings (e.g. the Wacto key) are git-ignored and never go into a publish folder or zip;
          copy them to the server by hand. -->
     <Content Update="appsettings.*.local.json" CopyToPublishDirectory="Never" />
+    <!-- Development settings hold test keys (Wacto token, test phone): never ship them. -->
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

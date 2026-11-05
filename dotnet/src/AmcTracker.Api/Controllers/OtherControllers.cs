@@ -80,25 +80,20 @@ public class ReportsController(ReportService reports, ReportExportService export
 
 [ApiController]
 [Route("api/reminders")]
-public class RemindersController(ReminderService reminders) : ControllerBase
+public class RemindersController(ReminderService reminders, IWebHostEnvironment env) : ControllerBase
 {
-    /// <summary>Runs the daily reminder pass now (admin only). Safe to repeat: sent reminders are never re-sent.</summary>
-    [HttpPost("run")]
-    [Authorize(Policy = AdminRequirement.Policy)]
-    public Task<ReminderRunResult> Run(CancellationToken ct) => reminders.RunDailyAsync(ct);
-
     /// <summary>
-    /// Sends the template for the body's planType (default AMC) once with sample values (admin only) to the body's
-    /// phone, or to Reminders:TestPhone when no phone is given. Stores nothing. The old ?planType= query is still
-    /// read for one release; the body wins. 422 for a bad phone, 409 test_phone_not_set when there is no number,
-    /// 409 provider_not_configured when the provider is Fake.
+    /// DEVELOPMENT ONLY, no sign-in needed: sends the AMC or Monthly template once, with sample values, to the
+    /// given phone (10 digits or +country code). Stores nothing. Returns 404 outside Development so a deployed API
+    /// can never be used to send messages without a token.
     /// </summary>
+    [AllowAnonymous]
     [HttpPost("test-send")]
-    [Authorize(Policy = AdminRequirement.Policy)]
-    public Task<TestSendResultDto> TestSend(
-        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] TestSendRequest? body,
-        [FromQuery] PlanType? planType, CancellationToken ct) =>
-        reminders.TestSendAsync(body?.PlanType ?? planType ?? PlanType.AMC, body?.Phone, ct);
+    public Task<TestSendResultDto> TestSend([FromBody] TestSendRequest body, CancellationToken ct)
+    {
+        if (!env.IsDevelopment()) throw AmcTracker.Application.Common.AppException.NotFound("Endpoint");
+        return reminders.TestSendAsync(body.PlanType ?? PlanType.AMC, body.Phone, ct);
+    }
 
     /// <summary>"Try again" on one failed reminder. 409 when it cannot be retried (sent, out of attempts, plan over).</summary>
     [HttpPost("{id:int}/retry")]

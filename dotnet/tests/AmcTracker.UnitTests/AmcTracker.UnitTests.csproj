@@ -21,7 +21,7 @@
 
   <ItemGroup>
     <!-- Shared with the Flutter tests, so the app's date preview and the server always agree. -->
-    <None Include="..\..\..\..\testdata\plan_schedule_cases.json" Link="plan_schedule_cases.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Condition="Exists('..\..\..\..\testdata\plan_schedule_cases.json')" Include="..\..\..\..\testdata\plan_schedule_cases.json" Link="plan_schedule_cases.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
